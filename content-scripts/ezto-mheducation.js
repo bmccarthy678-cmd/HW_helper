@@ -84,15 +84,25 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "status") setStatus(message.text, message.timeout);
 });
 
-if (window.top === window.self) {
-  ensureUi();
+function shouldShowUi() {
+  if (window.top === window.self) return true;
+  return window.innerWidth >= 400 && window.innerHeight >= 300;
+}
+
+function boot() {
+  if (!shouldShowUi()) return;
+
   const observer = new MutationObserver(ensureUi);
-  if (document.body) {
+  const start = () => {
+    ensureUi();
     observer.observe(document.body, { childList: true, subtree: true });
+  };
+
+  if (document.body) {
+    start();
   } else {
-    document.addEventListener("DOMContentLoaded", () => {
-      ensureUi();
-      observer.observe(document.body, { childList: true, subtree: true });
-    });
+    document.addEventListener("DOMContentLoaded", start);
   }
 }
+
+boot();

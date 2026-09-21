@@ -96,7 +96,7 @@ function scrapeInPage(questionSelectors, choiceSelectors) {
   };
 }
 
-function applyInPage(choiceSelectors, answer) {
+function applyInPage(choiceSelectors, answer, allowMultiple) {
   const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
 
   let nodes = [];
@@ -164,7 +164,7 @@ function applyInPage(choiceSelectors, answer) {
         (text.length > 3 && value.includes(text))
     );
 
-    if (matches) {
+    if (matches && (allowMultiple || !clicked)) {
       click(node);
       clicked += 1;
     }
@@ -281,6 +281,7 @@ async function handleAskQuestion(message, sender) {
     sourceTabId: tabId,
     frameId: found.frameId,
     site: message.site,
+    questionType: found.question.questionType,
     assistant: settings.assistant,
     autoSelect: settings.autoSelect,
     startedAt: Date.now(),
@@ -348,7 +349,11 @@ async function handleAssistantResponse(message) {
     const results = await chrome.scripting.executeScript({
       target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
       func: applyInPage,
-      args: [config.choice, parsed.answer],
+      args: [
+        config.choice,
+        parsed.answer,
+        pending.questionType === "multiple-select",
+      ],
     });
     clicked = results && results[0] ? results[0].result : 0;
   } catch (error) {
