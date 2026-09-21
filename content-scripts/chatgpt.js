@@ -91,6 +91,27 @@ function setComposerText(composer, text) {
   composer.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function isDisabled(node) {
+  return Boolean(
+    node.disabled ||
+      node.getAttribute("aria-disabled") === "true" ||
+      node.getAttribute("data-disabled") === "true"
+  );
+}
+
+function pressEnter(node) {
+  const init = {
+    key: "Enter",
+    code: "Enter",
+    keyCode: 13,
+    which: 13,
+    bubbles: true,
+    cancelable: true,
+  };
+  node.dispatchEvent(new KeyboardEvent("keydown", init));
+  node.dispatchEvent(new KeyboardEvent("keyup", init));
+}
+
 async function insertQuestion(questionData) {
   const text = window.AutoMcGraw.buildPrompt(questionData);
 
@@ -109,11 +130,11 @@ async function insertQuestion(questionData) {
 
       setTimeout(() => {
         const sendButton = findSendButton();
-        if (!sendButton) {
-          reject(new Error("Send button not found"));
-          return;
+        if (sendButton && !isDisabled(sendButton)) {
+          sendButton.click();
+        } else {
+          pressEnter(composer);
         }
-        sendButton.click();
         startObserving();
         resolve();
       }, 400);
@@ -138,7 +159,7 @@ function extractResponseText(node) {
 
 function cleanup(text) {
   return text
-    .replace(/[​-‍﻿]/g, "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\n\s*/g, " ")
     .trim();
 }

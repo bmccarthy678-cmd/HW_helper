@@ -161,7 +161,7 @@ function startObserving() {
     }
 
     responseText = responseText
-      .replace(/[​-‍﻿]/g, "")
+      .replace(/[\u200B-\u200D\uFEFF]/g, "")
       .replace(/\n\s*/g, " ")
       .trim();
 

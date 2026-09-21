@@ -47,10 +47,15 @@ function findComposer() {
   );
 }
 
-function findSendButton() {
+function findSendButton(composer) {
+  const scope =
+    (composer &&
+      composer.closest("form, div[class*='input'], div[class*='editor']")) ||
+    document;
+
   return (
-    document.querySelector("[role='button'][aria-disabled='false']") ||
-    document.querySelector("div[class*='send'], button[class*='send']")
+    scope.querySelector("div[class*='send'], button[class*='send']") ||
+    scope.querySelector("[role='button'][aria-disabled='false']")
   );
 }
 
@@ -91,6 +96,14 @@ function setComposerText(composer, text) {
   composer.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+function isDisabled(node) {
+  return Boolean(
+    node.disabled ||
+      node.getAttribute("aria-disabled") === "true" ||
+      node.getAttribute("data-disabled") === "true"
+  );
+}
+
 function pressEnter(composer) {
   const init = {
     key: "Enter",
@@ -120,8 +133,8 @@ async function insertQuestion(questionData) {
       setComposerText(composer, text);
 
       setTimeout(() => {
-        const sendButton = findSendButton();
-        if (sendButton) {
+        const sendButton = findSendButton(composer);
+        if (sendButton && !isDisabled(sendButton)) {
           sendButton.click();
         } else {
           pressEnter(composer);
@@ -141,7 +154,7 @@ function latestMessage() {
 
 function cleanup(text) {
   return text
-    .replace(/[​-‍﻿]/g, "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/\n\s*/g, " ")
     .trim();
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HW Helper",
-  "version": "2.9",
+  "version": "3.0",
   "description": "Transfers a question from MHEducation's Smartbook to AI assistants and then uses their response to auto-select an answer.",
   "permissions": [
     "tabs",

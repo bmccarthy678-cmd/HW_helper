@@ -292,10 +292,16 @@ async function handleAskQuestion(message, sender) {
     settings.focusAssistantTab
   );
 
-  const ack = await sendWhenReady(tab.id, {
-    type: "receiveQuestion",
-    question: found.question,
-  });
+  let ack;
+  try {
+    ack = await sendWhenReady(tab.id, {
+      type: "receiveQuestion",
+      question: found.question,
+    });
+  } catch (error) {
+    await takePending();
+    throw error;
+  }
 
   if (ack && ack.received === false) {
     await takePending();
