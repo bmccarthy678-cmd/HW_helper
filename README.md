@@ -58,6 +58,19 @@ popup/settings.{html,css,js}             Settings UI
 assets/                                  Icons
 ```
 
+## Running a whole assignment
+
+With **Select automatically**, a **Submit confidence** level, and **Next
+Question** all enabled, the button starts a continuous run: it answers, submits,
+advances, and repeats until the assignment ends. While running the button reads
+**Stop** and pressing it halts after the question in flight.
+
+The run stops by itself when no further question is found, after two consecutive
+failures, if Next Question cannot be pressed, or at a 100 question safety limit.
+
+With any of those three settings off, the button answers a single question and
+waits for you, which is the better setting if you want to check the answers.
+
 ## Settings
 
 Open the extension's popup to choose the assistant, toggle automatic answer

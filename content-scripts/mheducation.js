@@ -1,9 +1,15 @@
 const BUTTON_ID = "hw-helper-trigger";
 const STATUS_ID = "hw-helper-status";
 const REPLY_TIMEOUT_MS = 195000;
+const MAX_QUESTIONS = 100;
+const FAILURE_LIMIT = 2;
+const CYCLE_GAP_MS = 1400;
 
 let inFlight = false;
 let watchdog = null;
+let running = false;
+let answered = 0;
+let cycleResolve = null;
 
 function ensureUi() {
   if (!document.body || document.getElementById(BUTTON_ID)) return;
@@ -43,7 +49,7 @@ function ensureUi() {
     display: "none",
   });
 
-  button.addEventListener("click", ask);
+  button.addEventListener("click", onClick);
 
   document.body.appendChild(button);
   document.body.appendChild(status);
@@ -64,15 +70,20 @@ function setStatus(text, timeout = 8000) {
   }
 }
 
-function setBusy(busy) {
-  inFlight = busy;
-
+function paintButton() {
   const button = document.getElementById(BUTTON_ID);
   if (!button) return;
 
-  button.disabled = busy;
-  button.style.opacity = busy ? "0.6" : "1";
-  button.style.cursor = busy ? "default" : "pointer";
+  button.textContent = running ? "Stop" : "HW Helper";
+  button.style.background = running ? "#b3261e" : "#1f5799";
+  button.disabled = inFlight && !running;
+  button.style.opacity = button.disabled ? "0.6" : "1";
+  button.style.cursor = button.disabled ? "default" : "pointer";
+}
+
+function setBusy(busy) {
+  inFlight = busy;
+  paintButton();
 }
 
 function clearWatchdog() {
@@ -81,7 +92,52 @@ function clearWatchdog() {
   watchdog = null;
 }
 
-async function ask() {
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function awaitCycle() {
+  return new Promise((resolve) => {
+    cycleResolve = resolve;
+  });
+}
+
+function stopRun(text) {
+  running = false;
+  inFlight = false;
+  cycleResolve = null;
+  clearWatchdog();
+  paintButton();
+  if (text) setStatus(text, 15000);
+}
+
+async function onClick() {
+  if (running) {
+    stopRun(`Stopped after ${answered} question${answered === 1 ? "" : "s"}.`);
+    return;
+  }
+
+  const settings = await chrome.storage.sync.get({
+    confidence: "off",
+    advance: false,
+    autoSelect: true,
+  });
+
+  const canRun =
+    settings.autoSelect && settings.confidence !== "off" && settings.advance;
+
+  if (!canRun) {
+    await askOnce();
+    return;
+  }
+
+  answered = 0;
+  running = true;
+  paintButton();
+  runLoop();
+}
+
+async function askOnce() {
   if (inFlight) return;
 
   setBusy(true);
@@ -120,11 +176,93 @@ async function ask() {
   }
 }
 
+async function runLoop() {
+  let failures = 0;
+
+  while (running && answered < MAX_QUESTIONS) {
+    setStatus(`Working on question ${answered + 1}...`, 0);
+
+    const cycle = awaitCycle();
+    let result;
+
+    try {
+      result = await chrome.runtime.sendMessage({
+        type: "askQuestion",
+        site: "smartbook",
+      });
+    } catch (error) {
+      stopRun(`Stopped: ${error.message}`);
+      return;
+    }
+
+    if (!running) return;
+
+    if (!result || !result.ok) {
+      const reason = result ? result.error : "no response";
+
+      if (/no question found/i.test(reason)) {
+        stopRun(`Finished. ${answered} question${answered === 1 ? "" : "s"} answered.`);
+        return;
+      }
+
+      failures += 1;
+      if (failures >= FAILURE_LIMIT) {
+        stopRun(`Stopped after ${answered} answered. ${reason}`);
+        return;
+      }
+
+      await delay(CYCLE_GAP_MS);
+      continue;
+    }
+
+    if (result.done) {
+      await delay(CYCLE_GAP_MS);
+      continue;
+    }
+
+    const status = await Promise.race([cycle, delay(REPLY_TIMEOUT_MS).then(() => null)]);
+    if (!running) return;
+
+    if (!status || status.outcome !== "selected") {
+      failures += 1;
+      const reason = status ? status.text : "no reply in time";
+
+      if (failures >= FAILURE_LIMIT) {
+        stopRun(`Stopped after ${answered} answered. ${reason}`);
+        return;
+      }
+
+      await delay(CYCLE_GAP_MS);
+      continue;
+    }
+
+    failures = 0;
+    answered += 1;
+
+    if (!status.advanced) {
+      stopRun(`Stopped after ${answered}: could not press Next Question.`);
+      return;
+    }
+
+    await delay(CYCLE_GAP_MS);
+  }
+
+  if (running) stopRun(`Stopped at the ${MAX_QUESTIONS} question safety limit.`);
+}
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== "status") return;
+
   clearWatchdog();
-  setBusy(false);
-  setStatus(message.text, message.timeout);
+
+  if (!running) setBusy(false);
+  setStatus(message.text, running ? 0 : message.timeout);
+
+  if (cycleResolve) {
+    const resolve = cycleResolve;
+    cycleResolve = null;
+    resolve(message);
+  }
 });
 
 function shouldShowUi() {

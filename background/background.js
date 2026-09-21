@@ -523,6 +523,7 @@ async function handleAssistantResponse(message) {
   } catch (error) {
     await notifySource(pending.sourceTabId, {
       type: "status",
+      outcome: "failed",
       text: `Could not read the reply: ${error.message}`,
     });
     return;
@@ -533,6 +534,7 @@ async function handleAssistantResponse(message) {
   if (!pending.autoSelect) {
     await notifySource(pending.sourceTabId, {
       type: "status",
+      outcome: "manual",
       text: `Answer: ${answerText}. ${parsed.explanation || ""}`,
     });
     return;
@@ -556,6 +558,7 @@ async function handleAssistantResponse(message) {
   } catch (error) {
     await notifySource(pending.sourceTabId, {
       type: "status",
+      outcome: "failed",
       text: `Could not reach the question frame: ${error.message}`,
     });
     return;
@@ -564,12 +567,14 @@ async function handleAssistantResponse(message) {
   if (!clicked) {
     await notifySource(pending.sourceTabId, {
       type: "status",
+      outcome: "failed",
       text: `No choice matched. Answer: ${answerText}`,
     });
     return;
   }
 
   let note = "";
+  let advanced = false;
   const level = pending.confidence;
 
   if (level && level !== "off") {
@@ -581,6 +586,7 @@ async function handleAssistantResponse(message) {
       });
 
       const outcome = results && results[0] ? results[0].result : null;
+      advanced = Boolean(outcome && outcome.advanced);
       if (outcome && outcome.clicked) {
         note = outcome.advanced
           ? ` Submitted as ${level} and moved on.`
@@ -595,6 +601,8 @@ async function handleAssistantResponse(message) {
 
   await notifySource(pending.sourceTabId, {
     type: "status",
+    outcome: "selected",
+    advanced,
     text: `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.${note} ${parsed.explanation || ""}`,
   });
 }
@@ -605,7 +613,8 @@ async function handleAssistantTimeout() {
 
   await notifySource(pending.sourceTabId, {
     type: "status",
-    text: "The assistant did not reply in time. Try again.",
+    outcome: "timeout",
+    text: "The assistant did not reply in time.",
   });
 }
 
