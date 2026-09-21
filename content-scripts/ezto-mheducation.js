@@ -11,7 +11,7 @@ function ensureUi() {
   const button = document.createElement("button");
   button.id = BUTTON_ID;
   button.type = "button";
-  button.textContent = "Ask AI";
+  button.textContent = "HW Helper";
   Object.assign(button.style, {
     position: "fixed",
     right: "20px",

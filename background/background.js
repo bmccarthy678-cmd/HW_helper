@@ -55,84 +55,134 @@ const SITES = {
   },
 };
 
-function scrapeInPage(questionSelectors, choiceSelectors) {
+function pageAgent(op, questionSelectors, answer, allowMultiple) {
   const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
 
-  const all = (selectors) => {
-    for (const selector of selectors) {
-      let nodes;
+  const NOISE =
+    /^(exit assignment|concepts? completed|need help|read about the concept|rate your confidence|high|medium|low|reading|privacy center|terms of use|multiple choice question|select all that apply|ask ai|next|submit|back)\b/i;
+
+  const visible = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) return true;
+    return el.offsetParent !== null;
+  };
+
+  const labelTextFor = (input) => {
+    if (input.id) {
       try {
-        nodes = Array.from(document.querySelectorAll(selector));
+        const explicit = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+        const text = explicit ? norm(explicit.textContent) : "";
+        if (text) return text;
+      } catch (error) {
+        // malformed id, fall through
+      }
+    }
+
+    const wrapping = input.closest("label");
+    if (wrapping) {
+      const text = norm(wrapping.textContent);
+      if (text) return text;
+    }
+
+    let node = input.parentElement;
+    for (let depth = 0; depth < 4 && node; depth += 1, node = node.parentElement) {
+      if (node.querySelectorAll("input[type='radio'], input[type='checkbox']").length > 1) break;
+      const text = norm(node.textContent);
+      if (text && text.length <= 300) return text;
+    }
+
+    return "";
+  };
+
+  const collectChoices = () => {
+    const inputs = Array.from(
+      document.querySelectorAll("input[type='radio'], input[type='checkbox']")
+    ).filter(visible);
+
+    return inputs
+      .map((input) => ({ input, text: labelTextFor(input) }))
+      .filter((choice) => choice.text && !NOISE.test(choice.text));
+  };
+
+  const findStem = (anchor) => {
+    for (const selector of questionSelectors || []) {
+      try {
+        const node = document.querySelector(selector);
+        const text = node ? norm(node.textContent) : "";
+        if (text && !NOISE.test(text)) return text;
       } catch (error) {
         continue;
       }
-      nodes = nodes.filter((node) => norm(node.textContent));
-      if (nodes.length) return { selector, nodes };
     }
-    return { selector: null, nodes: [] };
+
+    if (!anchor) return "";
+
+    const candidates = Array.from(
+      document.querySelectorAll("p, div, span, h1, h2, h3, h4, legend, li")
+    );
+
+    let best = "";
+    for (const el of candidates) {
+      if (el.contains(anchor)) continue;
+      const rel = el.compareDocumentPosition(anchor);
+      if (!(rel & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      if (el.querySelector("input, textarea, select, button")) continue;
+      if (!visible(el)) continue;
+
+      const text = norm(el.textContent);
+      if (text.length < 12 || text.length > 900) continue;
+      if (NOISE.test(text)) continue;
+
+      best = text;
+    }
+
+    return best;
   };
 
-  const stem = all(questionSelectors);
-  const choices = all(choiceSelectors);
+  const choices = collectChoices();
 
-  if (!stem.nodes.length && !choices.nodes.length) return null;
+  if (op === "scrape") {
+    const anchor = choices.length ? choices[0].input : null;
+    const stem = findStem(anchor);
 
-  const inputs = choices.nodes.filter((node) =>
-    node.querySelector("input[type='checkbox']")
-  );
+    if (!stem && !choices.length) return null;
 
-  return {
-    questionText: norm(stem.nodes.length ? stem.nodes[0].textContent : ""),
-    choices: choices.nodes.map((node, index) => ({
-      label: String.fromCharCode(65 + index),
-      text: norm(node.textContent),
-    })),
-    questionType: !choices.nodes.length
-      ? "fill-in-the-blank"
-      : inputs.length
-        ? "multiple-select"
-        : "multiple-choice",
-    matchedSelectors: { question: stem.selector, choice: choices.selector },
-  };
-}
+    const isMulti = choices.some((c) => c.input.type === "checkbox");
 
-function applyInPage(choiceSelectors, answer, allowMultiple) {
-  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
-
-  let nodes = [];
-  for (const selector of choiceSelectors) {
-    try {
-      const found = Array.from(document.querySelectorAll(selector)).filter(
-        (node) => norm(node.textContent)
-      );
-      if (found.length) {
-        nodes = found;
-        break;
-      }
-    } catch (error) {
-      continue;
-    }
+    return {
+      questionText: stem,
+      choices: choices.map((choice, index) => ({
+        label: String.fromCharCode(65 + index),
+        text: choice.text,
+      })),
+      questionType: !choices.length
+        ? "fill-in-the-blank"
+        : isMulti
+          ? "multiple-select"
+          : "multiple-choice",
+    };
   }
 
-  if (!nodes.length) return 0;
+  if (!choices.length) return 0;
 
   const wanted = (Array.isArray(answer) ? answer : [answer])
     .map((value) => norm(value).toLowerCase())
     .filter(Boolean);
 
-  const click = (node) => {
-    const input = node.querySelector("input[type='radio'], input[type='checkbox']");
-    let label = node.querySelector("label");
-    if (!label && input && input.id) {
+  const click = (input) => {
+    let label = null;
+    if (input.id) {
       try {
         label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
       } catch (error) {
         label = null;
       }
     }
+    if (!label) label = input.closest("label");
 
-    const target = label || input || node;
-    const wasChecked = input ? input.checked : null;
+    const target = label || input;
+    const wasChecked = input.checked;
     const options = { bubbles: true, cancelable: true, view: window };
 
     ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
@@ -144,7 +194,7 @@ function applyInPage(choiceSelectors, answer, allowMultiple) {
       }
     });
 
-    if (input && input.checked === wasChecked) {
+    if (input.checked === wasChecked) {
       input.checked = !wasChecked;
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -152,20 +202,22 @@ function applyInPage(choiceSelectors, answer, allowMultiple) {
   };
 
   let clicked = 0;
-  nodes.forEach((node, index) => {
+  choices.forEach((choice, index) => {
     const label = String.fromCharCode(65 + index).toLowerCase();
-    const text = norm(node.textContent).toLowerCase();
+    const text = choice.text.toLowerCase();
 
     const matches = wanted.some(
       (value) =>
         value === label ||
         value === text ||
+        value === `${label}. ${text}` ||
+        (value.length > 2 && text === value) ||
         (value.length > 3 && text.includes(value)) ||
         (text.length > 3 && value.includes(text))
     );
 
     if (matches && (allowMultiple || !clicked)) {
-      click(node);
+      click(choice.input);
       clicked += 1;
     }
   });
@@ -178,8 +230,8 @@ async function scrapeAcrossFrames(tabId, site) {
 
   const results = await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
-    func: scrapeInPage,
-    args: [config.question, config.choice],
+    func: pageAgent,
+    args: ["scrape", config.question, null, false],
   });
 
   const hits = results
@@ -354,9 +406,10 @@ async function handleAssistantResponse(message) {
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
-      func: applyInPage,
+      func: pageAgent,
       args: [
-        config.choice,
+        "apply",
+        config.question,
         parsed.answer,
         pending.questionType === "multiple-select",
       ],
