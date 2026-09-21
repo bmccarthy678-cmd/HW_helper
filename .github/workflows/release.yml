@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from manifest.json
+        id: manifest
+        run: |
+          version="$(jq -r '.version' manifest.json)"
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "Could not read .version from manifest.json" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Manifest version: $version"
+
+      - name: Read latest git tag
+        id: latest
+        run: |
+          tag="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Latest tag: ${tag:-<none>}"
+
+      - name: Decide whether to release
+        id: decide
+        run: |
+          if [ "${{ steps.manifest.outputs.tag }}" = "${{ steps.latest.outputs.tag }}" ]; then
+            echo "Version unchanged (${{ steps.manifest.outputs.tag }}); skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version detected: ${{ steps.manifest.outputs.tag }}"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build HW_helper.zip
+        if: steps.decide.outputs.release == 'true'
+        run: |
+          zip -r HW_helper.zip \
+            manifest.json \
+            LICENSE \
+            assets \
+            background \
+            content-scripts \
+            popup
+          unzip -l HW_helper.zip
+
+      - name: Create GitHub release
+        if: steps.decide.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.manifest.outputs.tag }}
+          name: ${{ steps.manifest.outputs.tag }}
+          generate_release_notes: true
+          files: HW_helper.zip
