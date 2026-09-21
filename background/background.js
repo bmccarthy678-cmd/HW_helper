@@ -314,7 +314,53 @@ async function submitAgent(level, advance) {
 
   press(button);
 
-  if (!advance) return { clicked: true, advanced: false };
+  const readResult = async () => {
+    const deadline = Date.now() + 6000;
+
+    while (Date.now() < deadline) {
+      const text = norm(document.body.textContent);
+
+      if (text.includes("your answer")) {
+        let verdict = null;
+        const nodes = Array.from(document.querySelectorAll("*")).filter((el) => {
+          const own = norm(el.textContent);
+          return own.includes("your answer") && own.length < 400;
+        });
+
+        for (const node of nodes) {
+          const own = norm(node.textContent);
+          if (own.includes("incorrect")) { verdict = "incorrect"; break; }
+          if (own.includes("correct")) verdict = "correct";
+        }
+
+        let correctAnswer = null;
+        const heading = Array.from(document.querySelectorAll("*")).find(
+          (el) => norm(el.textContent) === "correct answer"
+        );
+        if (heading) {
+          let sib = heading.nextElementSibling;
+          while (sib && !norm(sib.textContent)) sib = sib.nextElementSibling;
+          if (sib) correctAnswer = norm(sib.textContent).slice(0, 400);
+          if (!correctAnswer && heading.parentElement) {
+            const parent = norm(heading.parentElement.textContent);
+            correctAnswer = parent.replace(/^correct answer/i, "").trim().slice(0, 400) || null;
+          }
+        }
+
+        if (verdict) return { verdict, correctAnswer };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    return { verdict: null, correctAnswer: null };
+  };
+
+  const result = await readResult();
+
+  if (!advance) {
+    return { clicked: true, advanced: false, ...result };
+  }
 
   const findNext = () =>
     candidates().find((node) => {
@@ -327,12 +373,12 @@ async function submitAgent(level, advance) {
     const next = findNext();
     if (next && isEnabled(next)) {
       press(next);
-      return { clicked: true, advanced: true };
+      return { clicked: true, advanced: true, ...result };
     }
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
-  return { clicked: true, advanced: false, reason: "next button never appeared" };
+  return { clicked: true, advanced: false, reason: "next button never appeared", ...result };
 }
 
 async function scrapeAcrossFrames(tabId, site) {
@@ -470,6 +516,8 @@ async function handleAskQuestion(message, sender) {
     frameId: found.frameId,
     site: message.site,
     questionType: found.question.questionType,
+    questionText: found.question.questionText,
+    choices: found.question.choices,
     assistant: settings.assistant,
     autoSelect: settings.autoSelect,
     confidence: settings.confidence,
@@ -575,6 +623,8 @@ async function handleAssistantResponse(message) {
 
   let note = "";
   let advanced = false;
+  let verdict = null;
+  let correctAnswer = null;
   const level = pending.confidence;
 
   if (level && level !== "off") {
@@ -587,6 +637,8 @@ async function handleAssistantResponse(message) {
 
       const outcome = results && results[0] ? results[0].result : null;
       advanced = Boolean(outcome && outcome.advanced);
+      verdict = outcome && outcome.verdict ? outcome.verdict : null;
+      correctAnswer = outcome && outcome.correctAnswer ? outcome.correctAnswer : null;
       if (outcome && outcome.clicked) {
         note = outcome.advanced
           ? ` Submitted as ${level} and moved on.`
@@ -599,11 +651,25 @@ async function handleAssistantResponse(message) {
     }
   }
 
+  await appendNote({
+    at: new Date().toISOString(),
+    question: pending.questionText || "",
+    choices: pending.choices || [],
+    answer: parsed.answer,
+    explanation: parsed.explanation || "",
+    assistant: pending.assistant,
+    verdict,
+    correctAnswer,
+  });
+
   await notifySource(pending.sourceTabId, {
     type: "status",
     outcome: "selected",
     advanced,
-    text: `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.${note} ${parsed.explanation || ""}`,
+    verdict,
+    text: `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.${note}${
+      verdict ? ` Marked ${verdict}.` : ""
+    } ${parsed.explanation || ""}`,
   });
 }
 
@@ -616,6 +682,15 @@ async function handleAssistantTimeout() {
     outcome: "timeout",
     text: "The assistant did not reply in time.",
   });
+}
+
+const NOTE_LIMIT = 500;
+
+async function appendNote(entry) {
+  const { notes = [] } = await chrome.storage.local.get("notes");
+  notes.push(entry);
+  if (notes.length > NOTE_LIMIT) notes.splice(0, notes.length - NOTE_LIMIT);
+  await chrome.storage.local.set({ notes });
 }
 
 async function notifySource(tabId, payload) {

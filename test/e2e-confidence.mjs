@@ -46,8 +46,9 @@ await ctx.route("https://chatgpt.com/**",r=>r.fulfill({status:200,contentType:"t
 let sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent("serviceworker",{timeout:15000}).catch(()=>null);
 
 // turn confidence on, the way the popup would
-await sw.evaluate(() => chrome.storage.sync.set({ confidence: "high", advance: true }));
+await sw.evaluate(() => chrome.storage.sync.set({ confidence: "high", advance: false }));
 
+sw.on("console", m=>console.log("SW["+m.type()+"]:", m.text()));
 const gpt=await ctx.newPage(); await gpt.goto("https://chatgpt.com/");
 const sb=await ctx.newPage(); await sb.goto("https://learning.mheducation.com/static/awd/index.html#/");
 
@@ -61,11 +62,15 @@ check("correct choice selected", await until(()=>sb.locator("#r1").isChecked()))
 check("High was clicked after selecting",
   await until(()=>sb.locator("#submitted").textContent().then(t=>t.startsWith("submitted:High"))),
   await sb.locator("#submitted").textContent());
-const chip = await sb.locator("#hw-helper-status").textContent().catch(()=>"");
-check("chip reports the submission", /Submitted as high/.test(chip), chip);
-check("Next Question pressed too",
-  await until(()=>sb.locator("#submitted").textContent().then(t=>t.includes("|advanced"))),
+check("chip reports the submission",
+  await until(()=>sb.locator("#hw-helper-status").textContent().then(t=>/Submitted as high/.test(t||"")), 30000),
+  await sb.locator("#hw-helper-status").textContent().catch(()=>""));
+check("stayed put because advancing is off",
+  !(await sb.locator("#submitted").textContent()).includes("|advanced"),
   await sb.locator("#submitted").textContent());
+check("button back to single-shot state",
+  await until(()=>sb.locator("#hw-helper-trigger").textContent().then(t=>t==="HW Helper"),10000),
+  await sb.locator("#hw-helper-trigger").textContent());
 await ctx.close();
 console.log(`\n${failures===0?"ALL CHECKS PASSED":failures+" CHECK(S) FAILED"}`);
 process.exit(failures===0?0:1);

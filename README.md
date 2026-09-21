@@ -71,6 +71,16 @@ failures, if Next Question cannot be pressed, or at a 100 question safety limit.
 With any of those three settings off, the button answers a single question and
 waits for you, which is the better setting if you want to check the answers.
 
+## Notes
+
+Every answered question is recorded: the question text, the choices, which one
+was picked, the assistant's reasoning, and — once the result screen renders —
+whether it was marked correct, plus the correct answer when it was not.
+
+The popup shows a running tally, including how many the assistant got right,
+and exports everything as Markdown. Notes live in local extension storage and
+stay until cleared.
+
 ## Settings
 
 Open the extension's popup to choose the assistant, toggle automatic answer

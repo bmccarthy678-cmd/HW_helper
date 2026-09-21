@@ -128,3 +128,26 @@ body {
   color: var(--accent);
   text-align: center;
 }
+
+.notes {
+  padding-top: 12px;
+  margin-bottom: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.notes__summary {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notes__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.button--quiet {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
