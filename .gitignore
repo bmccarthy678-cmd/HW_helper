@@ -1,21 +1,21 @@
-# OS
+# OS junk
 .DS_Store
 Thumbs.db
 
-# Editors
+# Editor
 .vscode/
 .idea/
 *.swp
 *~
 
-# Build output
+# Build artifacts
 dist/
 *.zip
 
-# Dependencies
+# Node
 node_modules/
 package-lock.json
 
-# Chrome extension packaging
+# Chrome extension dev
 *.crx
 *.pem
