@@ -2,6 +2,7 @@ let hasResponded = false;
 let messageCountAtQuestion = 0;
 let observationStartTime = 0;
 let observationTimeout = null;
+let fallbackTimeout = null;
 let observer = null;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -28,10 +29,28 @@ function resetObservation() {
     clearTimeout(observationTimeout);
     observationTimeout = null;
   }
+  if (fallbackTimeout) {
+    clearTimeout(fallbackTimeout);
+    fallbackTimeout = null;
+  }
   if (observer) {
     observer.disconnect();
     observer = null;
   }
+}
+
+function escapeHtml(value) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function toParagraphs(value) {
+  return value
+    .split("\n")
+    .map((line) => `<p>${escapeHtml(line) || "<br>"}</p>`)
+    .join("");
 }
 
 function waitForIdle(timeout = 120000) {
@@ -64,7 +83,7 @@ async function insertQuestion(questionData) {
 
     setTimeout(() => {
       inputArea.focus();
-      inputArea.innerHTML = `<p>${text}</p>`;
+      inputArea.innerHTML = toParagraphs(text);
       inputArea.dispatchEvent(new Event("input", { bubbles: true }));
 
       setTimeout(() => {
@@ -81,11 +100,52 @@ async function insertQuestion(questionData) {
   });
 }
 
+function extractJson(text) {
+  const jsonPattern = /\{[\s\S]*?"answer"[\s\S]*?"explanation"[\s\S]*?\}/;
+  const jsonMatch = text.match(jsonPattern);
+  return jsonMatch ? jsonMatch[0] : null;
+}
+
+function attemptFallback() {
+  fallbackTimeout = null;
+  if (hasResponded) return;
+
+  const messages = document.querySelectorAll("model-response");
+  if (!messages.length || messages.length <= messageCountAtQuestion) {
+    fallbackTimeout = setTimeout(attemptFallback, 2000);
+    return;
+  }
+
+  const latestMessage = messages[messages.length - 1];
+  const isGenerating =
+    latestMessage.querySelector(".cursor") ||
+    latestMessage.classList.contains("generating");
+
+  if (isGenerating) {
+    fallbackTimeout = setTimeout(attemptFallback, 2000);
+    return;
+  }
+
+  const extracted = extractJson(latestMessage.textContent.trim());
+  if (!extracted) {
+    fallbackTimeout = setTimeout(attemptFallback, 2000);
+    return;
+  }
+
+  hasResponded = true;
+  chrome.runtime
+    .sendMessage({ type: "geminiResponse", response: extracted })
+    .catch((error) => console.error("Error sending response:", error));
+  resetObservation();
+}
+
 function startObserving() {
   observationStartTime = Date.now();
   observationTimeout = setTimeout(() => {
     if (!hasResponded) resetObservation();
   }, 180000);
+
+  fallbackTimeout = setTimeout(attemptFallback, 30000);
 
   observer = new MutationObserver(() => {
     if (hasResponded) return;
@@ -125,26 +185,7 @@ function startObserving() {
           .catch((error) => console.error("Error sending response:", error));
       }
     } catch (e) {
-      const isGenerating =
-        latestMessage.querySelector(".cursor") ||
-        latestMessage.classList.contains("generating");
-
-      if (!isGenerating && Date.now() - observationStartTime > 30000) {
-        const fallbackText = latestMessage.textContent.trim();
-        try {
-          const jsonPattern =
-            /\{[\s\S]*?"answer"[\s\S]*?"explanation"[\s\S]*?\}/;
-          const jsonMatch = fallbackText.match(jsonPattern);
-          if (jsonMatch && !hasResponded) {
-            hasResponded = true;
-            chrome.runtime.sendMessage({
-              type: "geminiResponse",
-              response: jsonMatch[0],
-            });
-            resetObservation();
-          }
-        } catch (e) {}
-      }
+      return;
     }
   });
 
