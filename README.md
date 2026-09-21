@@ -22,20 +22,55 @@ Smartbook to an AI assistant and then uses the response to auto-select an answer
 4. Click **Load unpacked** and select the folder containing `manifest.json`.
 5. Open the extension's popup to configure which AI assistant to use.
 
+## How it works
+
+1. A content script on the courseware page adds an **Ask AI** button. Clicking it
+   scrapes the question stem, the answer choices, and the question type.
+2. `background.js` reads your chosen assistant from storage, finds or opens that
+   assistant's tab, and forwards the question.
+3. The assistant adapter builds a prompt with `AutoMcGraw.buildPrompt`, types it
+   into the composer, sends it, and watches for the reply.
+4. The reply is expected to be `{"answer": ..., "explanation": "..."}`. The adapter
+   relays it back, and the courseware script selects the matching choice.
+
+Messages on the wire:
+
+| Message | From | To |
+| --- | --- | --- |
+| `askQuestion` | courseware script | background |
+| `receiveQuestion` | background | assistant adapter |
+| `chatgptResponse` / `geminiResponse` / `deepseekResponse` | assistant adapter | background |
+| `applyAnswer`, `answerFailed` | background | courseware script |
+| `checkForUpdate` | popup | background |
+
 ## Project layout
 
 ```
 manifest.json                            Extension manifest (MV3)
-background/background.js                 Service worker — message routing between tabs
+background/background.js                 Service worker - routing, settings, update check
 content-scripts/mheducation.js           Smartbook question capture / answer selection
 content-scripts/ezto-mheducation.js      EZTO question capture / answer selection
-content-scripts/shared/prompt-builder.js Shared prompt construction for AI tabs
+content-scripts/shared/prompt-builder.js Prompt construction and HTML-safe insertion
 content-scripts/chatgpt.js               ChatGPT adapter
 content-scripts/gemini.js                Gemini adapter
 content-scripts/deepseek.js              DeepSeek adapter
 popup/settings.{html,css,js}             Settings UI
 assets/                                  Icons
 ```
+
+## Settings
+
+Open the extension's popup to choose the assistant, toggle automatic answer
+selection, and choose whether the assistant tab is brought to the foreground.
+Settings are stored in `chrome.storage.sync`. The popup can also check
+`api.github.com` for a newer release.
+
+## Selector caveat
+
+The DOM selectors for both McGraw Hill sites and for the three assistants are
+best-effort and will drift as those sites change. Each script tries several
+candidate selectors and reports a readable failure in the on-page status chip
+when none match. Expect to update the selector lists over time.
 
 ## Releases
 

@@ -39,20 +39,6 @@ function resetObservation() {
   }
 }
 
-function escapeHtml(value) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function toParagraphs(value) {
-  return value
-    .split("\n")
-    .map((line) => `<p>${escapeHtml(line) || "<br>"}</p>`)
-    .join("");
-}
-
 function waitForIdle(timeout = 120000) {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
@@ -83,7 +69,7 @@ async function insertQuestion(questionData) {
 
     setTimeout(() => {
       inputArea.focus();
-      inputArea.innerHTML = toParagraphs(text);
+      inputArea.innerHTML = window.AutoMcGraw.toParagraphs(text);
       inputArea.dispatchEvent(new Event("input", { bubbles: true }));
 
       setTimeout(() => {

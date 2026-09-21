@@ -1,1 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>HW Helper</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <header class="header">
+      <img class="header__icon" src="../assets/settings-icon.svg" alt="" />
+      <div>
+        <h1 class="header__title">HW Helper</h1>
+        <p class="header__version" id="version">v—</p>
+      </div>
+    </header>
 
+    <main>
+      <section class="field">
+        <label class="field__label" for="assistant">AI assistant</label>
+        <select class="field__control" id="assistant">
+          <option value="chatgpt">ChatGPT</option>
+          <option value="gemini">Gemini</option>
+          <option value="deepseek">DeepSeek</option>
+        </select>
+        <p class="field__hint">
+          Stay signed in to the assistant in another tab. The extension reuses
+          an open tab when it finds one.
+        </p>
+      </section>
+
+      <section class="field field--row">
+        <input type="checkbox" id="autoSelect" />
+        <label for="autoSelect">Select the answer automatically</label>
+      </section>
+
+      <section class="field field--row">
+        <input type="checkbox" id="focusAssistantTab" />
+        <label for="focusAssistantTab">Switch to the assistant tab</label>
+      </section>
+
+      <section class="update">
+        <button class="button" id="checkUpdate" type="button">
+          Check for updates
+        </button>
+        <p class="update__status" id="updateStatus"></p>
+      </section>
+    </main>
+
+    <p class="saved" id="saved" hidden>Saved</p>
+
+    <script src="settings.js"></script>
+  </body>
+</html>
