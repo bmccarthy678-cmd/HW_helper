@@ -1,5 +1,9 @@
 const BUTTON_ID = "hw-helper-trigger";
 const STATUS_ID = "hw-helper-status";
+const REPLY_TIMEOUT_MS = 195000;
+
+let inFlight = false;
+let watchdog = null;
 
 function ensureUi() {
   if (!document.body || document.getElementById(BUTTON_ID)) return;
@@ -60,7 +64,27 @@ function setStatus(text, timeout = 8000) {
   }
 }
 
+function setBusy(busy) {
+  inFlight = busy;
+
+  const button = document.getElementById(BUTTON_ID);
+  if (!button) return;
+
+  button.disabled = busy;
+  button.style.opacity = busy ? "0.6" : "1";
+  button.style.cursor = busy ? "default" : "pointer";
+}
+
+function clearWatchdog() {
+  if (!watchdog) return;
+  clearTimeout(watchdog);
+  watchdog = null;
+}
+
 async function ask() {
+  if (inFlight) return;
+
+  setBusy(true);
   setStatus("Reading the question...", 0);
 
   try {
@@ -70,23 +94,46 @@ async function ask() {
     });
 
     if (!result || !result.ok) {
+      setBusy(false);
       setStatus(`Failed: ${result ? result.error : "no response"}`);
       return;
     }
 
     setStatus(`Sent to ${result.assistant}. Waiting for a reply...`, 0);
+
+    clearWatchdog();
+    watchdog = setTimeout(() => {
+      watchdog = null;
+      if (!inFlight) return;
+      setBusy(false);
+      setStatus("No reply in time. Check the assistant tab, then try again.");
+    }, REPLY_TIMEOUT_MS);
   } catch (error) {
+    setBusy(false);
     setStatus(`Failed: ${error.message}`);
   }
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "status") setStatus(message.text, message.timeout);
+  if (message.type !== "status") return;
+  clearWatchdog();
+  setBusy(false);
+  setStatus(message.text, message.timeout);
 });
 
 function shouldShowUi() {
   if (window.top === window.self) return true;
-  return window.innerWidth >= 400 && window.innerHeight >= 300;
+  if (window.innerWidth < 400 || window.innerHeight < 300) return false;
+
+  try {
+    return !window.top.document.getElementById(BUTTON_ID);
+  } catch (error) {
+    return true;
+  }
+}
+
+function bootDelay() {
+  return window.top === window.self ? 0 : 600;
 }
 
 function boot() {
@@ -105,4 +152,4 @@ function boot() {
   }
 }
 
-boot();
+setTimeout(boot, bootDelay());

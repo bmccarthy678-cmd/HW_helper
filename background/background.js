@@ -372,6 +372,16 @@ async function handleAssistantResponse(message) {
   });
 }
 
+async function handleAssistantTimeout() {
+  const pending = await takePending();
+  if (!pending) return;
+
+  await notifySource(pending.sourceTabId, {
+    type: "status",
+    text: "The assistant did not reply in time. Try again.",
+  });
+}
+
 async function notifySource(tabId, payload) {
   try {
     await chrome.tabs.sendMessage(tabId, payload);
@@ -431,6 +441,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error("Failed to route assistant response:", error);
         sendResponse({ ok: false, error: error.message });
       });
+    return true;
+  }
+
+  if (message.type === "assistantTimeout") {
+    handleAssistantTimeout()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 

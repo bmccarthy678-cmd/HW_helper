@@ -128,7 +128,11 @@ function attemptFallback() {
 function startObserving() {
   observationStartTime = Date.now();
   observationTimeout = setTimeout(() => {
-    if (!hasResponded) resetObservation();
+    if (hasResponded) return;
+    resetObservation();
+    chrome.runtime
+      .sendMessage({ type: "assistantTimeout" })
+      .catch((error) => console.error("Error reporting timeout:", error));
   }, 180000);
 
   fallbackTimeout = setTimeout(attemptFallback, 30000);
