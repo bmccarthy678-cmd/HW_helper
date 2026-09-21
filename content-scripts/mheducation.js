@@ -1,154 +1,8 @@
-const QUESTION_SELECTORS = [
-  "[data-automation-id='question-stem']",
-  "[class*='questionStem']",
-  ".probe-question",
-  ".question-stem",
-  "[class*='prompt-text']",
-];
-
-const CHOICE_CONTAINER_SELECTORS = [
-  "[data-automation-id='choice']",
-  "[class*='choiceRow']",
-  "[class*='choice-row']",
-  ".choice",
-  "label[for^='choice']",
-];
-
 const BUTTON_ID = "hw-helper-trigger";
 const STATUS_ID = "hw-helper-status";
 
-let lastAnswer = null;
-
-function firstMatch(selectors) {
-  for (const selector of selectors) {
-    const node = document.querySelector(selector);
-    if (node && node.textContent.trim()) return node;
-  }
-  return null;
-}
-
-function allMatches(selectors) {
-  for (const selector of selectors) {
-    const nodes = Array.from(document.querySelectorAll(selector));
-    if (nodes.length) return nodes;
-  }
-  return [];
-}
-
-function normalize(value) {
-  return String(value == null ? "" : value)
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function detectQuestionType(choiceNodes) {
-  if (!choiceNodes.length) return "fill-in-the-blank";
-
-  const checkboxes = choiceNodes.filter((node) =>
-    node.querySelector("input[type='checkbox']")
-  );
-  if (checkboxes.length) return "multiple-select";
-
-  const labels = choiceNodes.map((node) => normalize(node.textContent).toLowerCase());
-  if (
-    labels.length === 2 &&
-    labels.some((text) => text.includes("true")) &&
-    labels.some((text) => text.includes("false"))
-  ) {
-    return "true-false";
-  }
-
-  return "multiple-choice";
-}
-
-function scrapeQuestion() {
-  const stem = firstMatch(QUESTION_SELECTORS);
-  const choiceNodes = allMatches(CHOICE_CONTAINER_SELECTORS);
-
-  if (!stem && !choiceNodes.length) {
-    throw new Error("No question found on this page");
-  }
-
-  const choices = choiceNodes.map((node, index) => ({
-    label: String.fromCharCode(65 + index),
-    text: normalize(node.textContent),
-  }));
-
-  return {
-    questionText: normalize(stem ? stem.textContent : document.title),
-    choices,
-    questionType: detectQuestionType(choiceNodes),
-    source: "smartbook",
-  };
-}
-
-function robustClick(node) {
-  const input = node.querySelector("input[type='radio'], input[type='checkbox']");
-  let label = node.querySelector("label");
-  if (!label && input && input.id) {
-    label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
-  }
-
-  const target = label || input || node;
-  const wasChecked = input ? input.checked : null;
-  const options = { bubbles: true, cancelable: true, view: window };
-
-  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
-    const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
-    try {
-      target.dispatchEvent(new Ctor(type, options));
-    } catch (error) {
-      target.dispatchEvent(new MouseEvent("click", options));
-    }
-  });
-
-  if (input && input.checked === wasChecked) {
-    input.checked = !wasChecked;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }
-}
-
-function selectChoices(answer) {
-  const choiceNodes = allMatches(CHOICE_CONTAINER_SELECTORS);
-  if (!choiceNodes.length) return 0;
-
-  const wanted = (Array.isArray(answer) ? answer : [answer])
-    .map((value) => normalize(value).toLowerCase())
-    .filter(Boolean);
-
-  let clicked = 0;
-
-  choiceNodes.forEach((node, index) => {
-    const label = String.fromCharCode(65 + index).toLowerCase();
-    const text = normalize(node.textContent).toLowerCase();
-
-    const matches = wanted.some(
-      (value) =>
-        value === label ||
-        value === text ||
-        (value.length > 3 && text.includes(value)) ||
-        (text.length > 3 && value.includes(text))
-    );
-
-    if (matches) {
-      robustClick(node);
-      clicked += 1;
-    }
-  });
-
-  return clicked;
-}
-
-function hasQuestion() {
-  if (!document.body) return false;
-  if (firstMatch(QUESTION_SELECTORS)) return true;
-  return allMatches(CHOICE_CONTAINER_SELECTORS).length > 0;
-}
-
 function ensureUi() {
-  if (!hasQuestion()) return;
-  if (document.getElementById(BUTTON_ID)) return;
+  if (!document.body || document.getElementById(BUTTON_ID)) return;
 
   const button = document.createElement("button");
   button.id = BUTTON_ID;
@@ -176,43 +30,43 @@ function ensureUi() {
     right: "20px",
     bottom: "60px",
     zIndex: "2147483647",
-    maxWidth: "280px",
+    maxWidth: "300px",
     padding: "8px 12px",
     borderRadius: "6px",
-    background: "rgba(0,0,0,.82)",
+    background: "rgba(0,0,0,.85)",
     color: "#fff",
     font: "400 12px system-ui, sans-serif",
     display: "none",
   });
 
-  button.addEventListener("click", askCurrentQuestion);
+  button.addEventListener("click", ask);
 
   document.body.appendChild(button);
   document.body.appendChild(status);
 }
 
-function setStatus(text, timeout = 6000) {
+function setStatus(text, timeout = 8000) {
   const status = document.getElementById(STATUS_ID);
   if (!status) return;
 
   status.textContent = text;
   status.style.display = "block";
 
+  if (status.hideTimer) clearTimeout(status.hideTimer);
   if (timeout) {
-    setTimeout(() => {
+    status.hideTimer = setTimeout(() => {
       status.style.display = "none";
     }, timeout);
   }
 }
 
-async function askCurrentQuestion() {
-  try {
-    const question = scrapeQuestion();
-    setStatus("Sending question to the assistant...", 0);
+async function ask() {
+  setStatus("Reading the question...", 0);
 
+  try {
     const result = await chrome.runtime.sendMessage({
       type: "askQuestion",
-      question,
+      site: "smartbook",
     });
 
     if (!result || !result.ok) {
@@ -220,46 +74,25 @@ async function askCurrentQuestion() {
       return;
     }
 
-    setStatus(`Waiting on ${result.assistant}...`, 0);
+    setStatus(`Sent to ${result.assistant}. Waiting for a reply...`, 0);
   } catch (error) {
     setStatus(`Failed: ${error.message}`);
   }
 }
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "applyAnswer") {
-    lastAnswer = message.answer;
-
-    if (!message.autoSelect) {
-      setStatus(`Answer: ${JSON.stringify(message.answer)}`);
-      return;
-    }
-
-    const clicked = selectChoices(message.answer);
-    setStatus(
-      clicked
-        ? `Selected ${clicked} choice${clicked === 1 ? "" : "s"}. ${message.explanation}`
-        : `Could not match a choice. Answer: ${JSON.stringify(message.answer)}`
-    );
-    return;
-  }
-
-  if (message.type === "answerFailed") {
-    setStatus(`Assistant error: ${message.error}`);
-  }
+  if (message.type === "status") setStatus(message.text, message.timeout);
 });
 
-function boot() {
-  if (!document.body) return;
+if (window.top === window.self) {
   ensureUi();
-  new MutationObserver(ensureUi).observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
-}
-
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", boot);
-} else {
-  boot();
+  const observer = new MutationObserver(ensureUi);
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener("DOMContentLoaded", () => {
+      ensureUi();
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
 }

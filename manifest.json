@@ -1,9 +1,13 @@
 {
   "manifest_version": 3,
   "name": "HW Helper",
-  "version": "2.6",
+  "version": "2.7",
   "description": "Transfers a question from MHEducation's Smartbook to AI assistants and then uses their response to auto-select an answer.",
-  "permissions": ["tabs", "scripting", "storage"],
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage"
+  ],
   "host_permissions": [
     "https://learning.mheducation.com/*",
     "https://ezto.mheducation.com/*",
@@ -24,33 +28,45 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://learning.mheducation.com/static/awd/*"],
-      "js": ["content-scripts/mheducation.js"],
-      "all_frames": true,
+      "matches": [
+        "https://learning.mheducation.com/static/awd/*"
+      ],
+      "js": [
+        "content-scripts/mheducation.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://ezto.mheducation.com/*"],
-      "js": ["content-scripts/ezto-mheducation.js"],
-      "all_frames": true,
+      "matches": [
+        "https://ezto.mheducation.com/*"
+      ],
+      "js": [
+        "content-scripts/ezto-mheducation.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://chatgpt.com/*"],
+      "matches": [
+        "https://chatgpt.com/*"
+      ],
       "js": [
         "content-scripts/shared/prompt-builder.js",
         "content-scripts/chatgpt.js"
       ]
     },
     {
-      "matches": ["https://gemini.google.com/*"],
+      "matches": [
+        "https://gemini.google.com/*"
+      ],
       "js": [
         "content-scripts/shared/prompt-builder.js",
         "content-scripts/gemini.js"
       ]
     },
     {
-      "matches": ["https://chat.deepseek.com/*"],
+      "matches": [
+        "https://chat.deepseek.com/*"
+      ],
       "js": [
         "content-scripts/shared/prompt-builder.js",
         "content-scripts/deepseek.js"
@@ -64,7 +80,9 @@
         "popup/settings.css",
         "popup/settings.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

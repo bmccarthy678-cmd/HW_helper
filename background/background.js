@@ -19,6 +19,178 @@ const ASSISTANTS = {
   },
 };
 
+const SITES = {
+  smartbook: {
+    question: [
+      "[data-automation-id='question-stem']",
+      "[class*='questionStem']",
+      ".probe-question",
+      ".question-stem",
+      "[class*='prompt-text']",
+      "[class*='stem']",
+    ],
+    choice: [
+      "[data-automation-id='choice']",
+      "[class*='choiceRow']",
+      "[class*='choice-row']",
+      "[class*='answerChoice']",
+      ".choice",
+      "label[for^='choice']",
+    ],
+  },
+  ezto: {
+    question: [
+      "[class*='questionText']",
+      "[class*='question-text']",
+      ".question-body",
+      "[class*='stem']",
+    ],
+    choice: [
+      "[class*='answerChoice']",
+      "[class*='answer-choice']",
+      "tr[class*='choice']",
+      ".choice-container",
+      "label[class*='choice']",
+    ],
+  },
+};
+
+function scrapeInPage(questionSelectors, choiceSelectors) {
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+
+  const all = (selectors) => {
+    for (const selector of selectors) {
+      let nodes;
+      try {
+        nodes = Array.from(document.querySelectorAll(selector));
+      } catch (error) {
+        continue;
+      }
+      nodes = nodes.filter((node) => norm(node.textContent));
+      if (nodes.length) return { selector, nodes };
+    }
+    return { selector: null, nodes: [] };
+  };
+
+  const stem = all(questionSelectors);
+  const choices = all(choiceSelectors);
+
+  if (!stem.nodes.length && !choices.nodes.length) return null;
+
+  const inputs = choices.nodes.filter((node) =>
+    node.querySelector("input[type='checkbox']")
+  );
+
+  return {
+    questionText: norm(stem.nodes.length ? stem.nodes[0].textContent : ""),
+    choices: choices.nodes.map((node, index) => ({
+      label: String.fromCharCode(65 + index),
+      text: norm(node.textContent),
+    })),
+    questionType: !choices.nodes.length
+      ? "fill-in-the-blank"
+      : inputs.length
+        ? "multiple-select"
+        : "multiple-choice",
+    matchedSelectors: { question: stem.selector, choice: choices.selector },
+  };
+}
+
+function applyInPage(choiceSelectors, answer) {
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+
+  let nodes = [];
+  for (const selector of choiceSelectors) {
+    try {
+      const found = Array.from(document.querySelectorAll(selector)).filter(
+        (node) => norm(node.textContent)
+      );
+      if (found.length) {
+        nodes = found;
+        break;
+      }
+    } catch (error) {
+      continue;
+    }
+  }
+
+  if (!nodes.length) return 0;
+
+  const wanted = (Array.isArray(answer) ? answer : [answer])
+    .map((value) => norm(value).toLowerCase())
+    .filter(Boolean);
+
+  const click = (node) => {
+    const input = node.querySelector("input[type='radio'], input[type='checkbox']");
+    let label = node.querySelector("label");
+    if (!label && input && input.id) {
+      try {
+        label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+      } catch (error) {
+        label = null;
+      }
+    }
+
+    const target = label || input || node;
+    const wasChecked = input ? input.checked : null;
+    const options = { bubbles: true, cancelable: true, view: window };
+
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+      try {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        target.dispatchEvent(new Ctor(type, options));
+      } catch (error) {
+        target.dispatchEvent(new MouseEvent("click", options));
+      }
+    });
+
+    if (input && input.checked === wasChecked) {
+      input.checked = !wasChecked;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+
+  let clicked = 0;
+  nodes.forEach((node, index) => {
+    const label = String.fromCharCode(65 + index).toLowerCase();
+    const text = norm(node.textContent).toLowerCase();
+
+    const matches = wanted.some(
+      (value) =>
+        value === label ||
+        value === text ||
+        (value.length > 3 && text.includes(value)) ||
+        (text.length > 3 && value.includes(text))
+    );
+
+    if (matches) {
+      click(node);
+      clicked += 1;
+    }
+  });
+
+  return clicked;
+}
+
+async function scrapeAcrossFrames(tabId, site) {
+  const config = SITES[site] || SITES.smartbook;
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func: scrapeInPage,
+    args: [config.question, config.choice],
+  });
+
+  const hits = results
+    .filter((entry) => entry && entry.result)
+    .sort((a, b) => b.result.choices.length - a.result.choices.length);
+
+  if (!hits.length) return null;
+
+  return { frameId: hits[0].frameId, question: hits[0].result };
+}
+
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
   autoSelect: true,
@@ -95,11 +267,20 @@ async function handleAskQuestion(message, sender) {
     throw new Error("Question did not come from a tab");
   }
 
+  const tabId = sender.tab.id;
+  const found = await scrapeAcrossFrames(tabId, message.site);
+
+  if (!found) {
+    throw new Error("No question found on this page");
+  }
+
   const settings = await getSettings();
   const config = ASSISTANTS[settings.assistant];
 
   await setPending({
-    sourceTabId: sender.tab.id,
+    sourceTabId: tabId,
+    frameId: found.frameId,
+    site: message.site,
     assistant: settings.assistant,
     autoSelect: settings.autoSelect,
     startedAt: Date.now(),
@@ -112,7 +293,7 @@ async function handleAskQuestion(message, sender) {
 
   const ack = await sendWhenReady(tab.id, {
     type: "receiveQuestion",
-    question: message.question,
+    question: found.question,
   });
 
   if (ack && ack.received === false) {
@@ -144,18 +325,45 @@ async function handleAssistantResponse(message) {
     parsed = parseAnswer(message.response);
   } catch (error) {
     await notifySource(pending.sourceTabId, {
-      type: "answerFailed",
-      error: error.message,
+      type: "status",
+      text: `Could not read the reply: ${error.message}`,
+    });
+    return;
+  }
+
+  const answerText = JSON.stringify(parsed.answer);
+
+  if (!pending.autoSelect) {
+    await notifySource(pending.sourceTabId, {
+      type: "status",
+      text: `Answer: ${answerText}. ${parsed.explanation || ""}`,
+    });
+    return;
+  }
+
+  const config = SITES[pending.site] || SITES.smartbook;
+
+  let clicked = 0;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
+      func: applyInPage,
+      args: [config.choice, parsed.answer],
+    });
+    clicked = results && results[0] ? results[0].result : 0;
+  } catch (error) {
+    await notifySource(pending.sourceTabId, {
+      type: "status",
+      text: `Could not reach the question frame: ${error.message}`,
     });
     return;
   }
 
   await notifySource(pending.sourceTabId, {
-    type: "applyAnswer",
-    answer: parsed.answer,
-    explanation: parsed.explanation || "",
-    autoSelect: pending.autoSelect,
-    elapsedMs: Date.now() - pending.startedAt,
+    type: "status",
+    text: clicked
+      ? `Selected ${clicked} choice${clicked === 1 ? "" : "s"}. ${parsed.explanation || ""}`
+      : `No choice matched. Answer: ${answerText}`,
   });
 }
 
