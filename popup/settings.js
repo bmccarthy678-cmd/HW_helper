@@ -2,12 +2,16 @@ const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
   autoSelect: true,
   focusAssistantTab: false,
+  confidence: "off",
+  advance: false,
 };
 
 const fields = {
   assistant: document.getElementById("assistant"),
   autoSelect: document.getElementById("autoSelect"),
   focusAssistantTab: document.getElementById("focusAssistantTab"),
+  confidence: document.getElementById("confidence"),
+  advance: document.getElementById("advance"),
 };
 
 const savedNote = document.getElementById("saved");
@@ -33,6 +37,8 @@ async function load() {
   fields.assistant.value = settings.assistant;
   fields.autoSelect.checked = Boolean(settings.autoSelect);
   fields.focusAssistantTab.checked = Boolean(settings.focusAssistantTab);
+  fields.confidence.value = settings.confidence;
+  fields.advance.checked = Boolean(settings.advance);
 }
 
 function persist() {
@@ -41,6 +47,8 @@ function persist() {
       assistant: fields.assistant.value,
       autoSelect: fields.autoSelect.checked,
       focusAssistantTab: fields.focusAssistantTab.checked,
+      confidence: fields.confidence.value,
+      advance: fields.advance.checked,
     })
     .then(showSaved)
     .catch((error) => console.error("Could not save settings:", error));

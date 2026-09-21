@@ -143,6 +143,15 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   const choices = collectChoices();
 
   if (op === "scrape") {
+    const resultScreen = Array.from(
+      document.querySelectorAll("button, [role='button'], input[type='button']")
+    ).some((node) => {
+      const text = norm(node.textContent || node.value || node.getAttribute("aria-label"));
+      return (text === "next question" || text === "next") && visible(node);
+    });
+
+    if (resultScreen) return { resultScreen: true };
+
     const anchor = choices.length ? choices[0].input : null;
     const stem = findStem(anchor);
 
@@ -225,6 +234,107 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   return clicked;
 }
 
+async function nextAgent() {
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
+
+  const node = Array.from(
+    document.querySelectorAll("button, [role='button'], input[type='button']")
+  ).find((el) => {
+    const text = norm(el.textContent || el.value || el.getAttribute("aria-label"));
+    return text === "next question" || text === "next";
+  });
+
+  if (!node) return false;
+
+  const options = { bubbles: true, cancelable: true, view: window };
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+    try {
+      const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+      node.dispatchEvent(new Ctor(type, options));
+    } catch (error) {
+      node.dispatchEvent(new MouseEvent("click", options));
+    }
+  });
+
+  return true;
+}
+
+async function submitAgent(level, advance) {
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
+  const wanted = norm(level);
+
+  const candidates = () =>
+    Array.from(
+      document.querySelectorAll(
+        "button, [role='button'], input[type='button'], input[type='submit']"
+      )
+    );
+
+  const findButton = () =>
+    candidates().find((node) => {
+      const text = norm(node.textContent || node.value || node.getAttribute("aria-label"));
+      return text === wanted;
+    }) || null;
+
+  const isEnabled = (node) =>
+    !(
+      node.disabled ||
+      node.getAttribute("aria-disabled") === "true" ||
+      node.getAttribute("data-disabled") === "true" ||
+      node.className.toString().toLowerCase().includes("disabled")
+    );
+
+  const deadline = Date.now() + 8000;
+  let button = null;
+
+  while (Date.now() < deadline) {
+    const found = findButton();
+    if (found && isEnabled(found)) {
+      button = found;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  const press = (node) => {
+    const options = { bubbles: true, cancelable: true, view: window };
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+      try {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        node.dispatchEvent(new Ctor(type, options));
+      } catch (error) {
+        node.dispatchEvent(new MouseEvent("click", options));
+      }
+    });
+  };
+
+  if (!button) {
+    return { clicked: false, reason: findButton() ? "button stayed disabled" : "button not found" };
+  }
+
+  press(button);
+
+  if (!advance) return { clicked: true, advanced: false };
+
+  const findNext = () =>
+    candidates().find((node) => {
+      const text = norm(node.textContent || node.value || node.getAttribute("aria-label"));
+      return text === "next question" || text === "next";
+    }) || null;
+
+  const nextDeadline = Date.now() + 10000;
+  while (Date.now() < nextDeadline) {
+    const next = findNext();
+    if (next && isEnabled(next)) {
+      press(next);
+      return { clicked: true, advanced: true };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  return { clicked: true, advanced: false, reason: "next button never appeared" };
+}
+
 async function scrapeAcrossFrames(tabId, site) {
   const config = SITES[site] || SITES.smartbook;
 
@@ -234,19 +344,28 @@ async function scrapeAcrossFrames(tabId, site) {
     args: ["scrape", config.question, null, false],
   });
 
-  const hits = results
-    .filter((entry) => entry && entry.result)
+  const entries = results.filter((entry) => entry && entry.result);
+
+  const questions = entries
+    .filter((entry) => !entry.result.resultScreen)
     .sort((a, b) => b.result.choices.length - a.result.choices.length);
 
-  if (!hits.length) return null;
+  if (questions.length) {
+    return { frameId: questions[0].frameId, question: questions[0].result };
+  }
 
-  return { frameId: hits[0].frameId, question: hits[0].result };
+  const resultScreen = entries.find((entry) => entry.result.resultScreen);
+  if (resultScreen) return { frameId: resultScreen.frameId, resultScreen: true };
+
+  return null;
 }
 
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
   autoSelect: true,
   focusAssistantTab: false,
+  confidence: "off",
+  advance: false,
 };
 
 const RELEASES_ENDPOINT =
@@ -326,6 +445,23 @@ async function handleAskQuestion(message, sender) {
     throw new Error("No question found on this page");
   }
 
+  if (found.resultScreen) {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [found.frameId] },
+      func: nextAgent,
+      args: [],
+    });
+
+    const moved = results && results[0] ? results[0].result : false;
+    return {
+      ok: true,
+      done: true,
+      status: moved
+        ? "Moved to the next question."
+        : "This is the answer screen; could not find Next Question.",
+    };
+  }
+
   const settings = await getSettings();
   const config = ASSISTANTS[settings.assistant];
 
@@ -336,6 +472,8 @@ async function handleAskQuestion(message, sender) {
     questionType: found.question.questionType,
     assistant: settings.assistant,
     autoSelect: settings.autoSelect,
+    confidence: settings.confidence,
+    advance: settings.advance,
     startedAt: Date.now(),
   });
 
@@ -423,11 +561,41 @@ async function handleAssistantResponse(message) {
     return;
   }
 
+  if (!clicked) {
+    await notifySource(pending.sourceTabId, {
+      type: "status",
+      text: `No choice matched. Answer: ${answerText}`,
+    });
+    return;
+  }
+
+  let note = "";
+  const level = pending.confidence;
+
+  if (level && level !== "off") {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
+        func: submitAgent,
+        args: [level, Boolean(pending.advance)],
+      });
+
+      const outcome = results && results[0] ? results[0].result : null;
+      if (outcome && outcome.clicked) {
+        note = outcome.advanced
+          ? ` Submitted as ${level} and moved on.`
+          : ` Submitted as ${level}.`;
+      } else {
+        note = ` Not submitted: ${outcome ? outcome.reason : "no result"}.`;
+      }
+    } catch (error) {
+      note = ` Not submitted: ${error.message}.`;
+    }
+  }
+
   await notifySource(pending.sourceTabId, {
     type: "status",
-    text: clicked
-      ? `Selected ${clicked} choice${clicked === 1 ? "" : "s"}. ${parsed.explanation || ""}`
-      : `No choice matched. Answer: ${answerText}`,
+    text: `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.${note} ${parsed.explanation || ""}`,
   });
 }
 

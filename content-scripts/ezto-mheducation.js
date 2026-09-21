@@ -99,6 +99,12 @@ async function ask() {
       return;
     }
 
+    if (result.done) {
+      setBusy(false);
+      setStatus(result.status);
+      return;
+    }
+
     setStatus(`Sent to ${result.assistant}. Waiting for a reply...`, 0);
 
     clearWatchdog();

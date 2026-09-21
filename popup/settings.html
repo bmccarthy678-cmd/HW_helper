@@ -38,6 +38,25 @@
         <label for="focusAssistantTab">Switch to the assistant tab</label>
       </section>
 
+      <section class="field">
+        <label class="field__label" for="confidence">Submit confidence</label>
+        <select class="field__control" id="confidence">
+          <option value="off">Do not submit</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <p class="field__hint">
+          After a choice is selected, click that confidence button to submit.
+          Leave off to review the answer yourself first.
+        </p>
+      </section>
+
+      <section class="field field--row">
+        <input type="checkbox" id="advance" />
+        <label for="advance">Then press Next Question</label>
+      </section>
+
       <section class="update">
         <button class="button" id="checkUpdate" type="button">
           Check for updates
