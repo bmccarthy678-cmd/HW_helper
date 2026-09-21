@@ -71,12 +71,31 @@ function scrapeQuestion() {
   };
 }
 
-function clickableWithin(node) {
-  return (
-    node.querySelector("input[type='radio'], input[type='checkbox']") ||
-    node.querySelector("label") ||
-    node
-  );
+function robustClick(node) {
+  const input = node.querySelector("input[type='radio'], input[type='checkbox']");
+  let label = node.querySelector("label");
+  if (!label && input && input.id) {
+    label = document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+  }
+
+  const target = label || input || node;
+  const wasChecked = input ? input.checked : null;
+  const options = { bubbles: true, cancelable: true, view: window };
+
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+    const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+    try {
+      target.dispatchEvent(new Ctor(type, options));
+    } catch (error) {
+      target.dispatchEvent(new MouseEvent("click", options));
+    }
+  });
+
+  if (input && input.checked === wasChecked) {
+    input.checked = !wasChecked;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
 }
 
 function selectChoices(answer) {
@@ -102,7 +121,7 @@ function selectChoices(answer) {
     );
 
     if (matches) {
-      clickableWithin(node).click();
+      robustClick(node);
       clicked += 1;
     }
   });
@@ -110,7 +129,14 @@ function selectChoices(answer) {
   return clicked;
 }
 
+function hasQuestion() {
+  if (!document.body) return false;
+  if (firstMatch(QUESTION_SELECTORS)) return true;
+  return allMatches(CHOICE_CONTAINER_SELECTORS).length > 0;
+}
+
 function ensureUi() {
+  if (!hasQuestion()) return;
   if (document.getElementById(BUTTON_ID)) return;
 
   const button = document.createElement("button");
@@ -211,6 +237,7 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 function boot() {
+  if (!document.body) return;
   ensureUi();
   new MutationObserver(ensureUi).observe(document.body, {
     childList: true,
