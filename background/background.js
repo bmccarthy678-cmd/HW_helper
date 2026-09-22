@@ -59,7 +59,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
 
   const NOISE =
-    /^(exit assignment|concepts? completed|need help|read about the concept|rate your confidence|high|medium|low|reading|privacy center|terms of use|multiple choice question|select all that apply|ask ai|next|submit|back)\b/i;
+    /^(exit assignment|concepts? completed|need help|read about the concept|rate your confidence|high|medium|low|reading|privacy center|terms of use|multiple choice question|fill in the blank question|select all that apply|ask ai|next|submit|back)\b/i;
 
   const visible = (el) => {
     if (!el) return false;
@@ -115,14 +115,34 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
     return nodes.map((node) => {
       if (node.tagName === "SELECT") {
         return {
+          node,
           kind: "select",
           options: Array.from(node.options)
             .map((option) => norm(option.textContent))
             .filter(Boolean),
         };
       }
-      return { kind: "text" };
+      return { node, kind: "text" };
     });
+  };
+
+  const stemAroundField = (field) => {
+    let node = field && field.parentElement;
+
+    for (let depth = 0; depth < 6 && node; depth += 1, node = node.parentElement) {
+      const clone = node.cloneNode(true);
+
+      clone
+        .querySelectorAll("input, textarea, select, [contenteditable='true']")
+        .forEach((el) => el.replaceWith(document.createTextNode(" _______ ")));
+
+      clone.querySelectorAll("button, nav, header, footer").forEach((el) => el.remove());
+
+      const text = norm(clone.textContent);
+      if (text.length >= 15 && !NOISE.test(text)) return text;
+    }
+
+    return "";
   };
 
   const collectChoices = () => {
@@ -190,7 +210,13 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
             "input[type='text'], input[type='number'], input:not([type]), textarea, select, [contenteditable='true']"
           )
         : null;
-    const stem = findStem(anchor);
+    let stem = findStem(anchor);
+
+    if (!stem && fields.length) stem = stemAroundField(fields[0].node);
+    if (fields.length && !choices.length) {
+      const around = stemAroundField(fields[0].node);
+      if (around.length > stem.length) stem = around;
+    }
 
     if (!stem && !choices.length && !fields.length) return null;
 
@@ -203,7 +229,10 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
         label: String.fromCharCode(65 + index),
         text: choice.text,
       })),
-      fields,
+      fields: fields.map((field) => ({
+        kind: field.kind,
+        options: field.options || null,
+      })),
       blanks: fields.length,
       questionType: choices.length
         ? isMulti
@@ -597,6 +626,10 @@ async function handleAskQuestion(message, sender) {
         ? "Moved to the next question."
         : "This is the answer screen; could not find Next Question.",
     };
+  }
+
+  if (!found.question.questionText) {
+    throw new Error("Could not read the question text on this page");
   }
 
   const settings = await getSettings();
