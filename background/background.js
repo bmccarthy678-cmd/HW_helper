@@ -205,19 +205,58 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
     });
   };
 
+  const parentOf = (node) => {
+    if (!node) return null;
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode && node.getRootNode();
+    return root && root.host ? root.host : null;
+  };
+
+  const textWithBlanks = (node) => {
+    let out = "";
+
+    const walk = (n) => {
+      if (!n) return;
+
+      if (n.nodeType === 3) {
+        out += n.nodeValue;
+        return;
+      }
+
+      if (n.nodeType !== 1) return;
+
+      const tag = n.tagName;
+      if (tag === "BUTTON" || tag === "NAV" || tag === "HEADER" || tag === "FOOTER") return;
+      if (tag === "SCRIPT" || tag === "STYLE") return;
+
+      let isField = false;
+      try {
+        isField = n.matches(FIELD_SELECTOR);
+      } catch (error) {
+        isField = false;
+      }
+      if (isField) {
+        out += " _______ ";
+        return;
+      }
+
+      if (n.shadowRoot) {
+        Array.from(n.shadowRoot.childNodes).forEach(walk);
+        return;
+      }
+
+      Array.from(n.childNodes).forEach(walk);
+    };
+
+    walk(node);
+    return norm(out);
+  };
+
   const stemAroundField = (field) => {
-    let node = field && field.parentElement;
+    let node = parentOf(field);
 
-    for (let depth = 0; depth < 6 && node; depth += 1, node = node.parentElement) {
-      const clone = node.cloneNode(true);
-
-      clone
-        .querySelectorAll("input, textarea, select, [contenteditable='true']")
-        .forEach((el) => el.replaceWith(document.createTextNode(" _______ ")));
-
-      clone.querySelectorAll("button, nav, header, footer").forEach((el) => el.remove());
-
-      const text = norm(clone.textContent);
+    for (let depth = 0; depth < 8 && node; depth += 1, node = parentOf(node)) {
+      const text = textWithBlanks(node);
       if (text.length >= 15 && !NOISE.test(text)) return text;
     }
 
