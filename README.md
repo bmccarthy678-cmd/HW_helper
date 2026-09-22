@@ -71,6 +71,16 @@ failures, if Next Question cannot be pressed, or at a 100 question safety limit.
 With any of those three settings off, the button answers a single question and
 waits for you, which is the better setting if you want to check the answers.
 
+## Question types
+
+Multiple choice and multiple select are answered by clicking. Fill in the blank
+and dropdown matching are answered by typing into the fields, one value per
+blank in the order they appear. Questions with several blanks ask the assistant
+for an array so each value lands in the right field.
+
+Inputs inside a header, nav or footer are ignored, as are search and filter
+boxes, so the page's own controls are never mistaken for answer fields.
+
 ## Notes
 
 Every answered question is recorded: the question text, the choices, which one

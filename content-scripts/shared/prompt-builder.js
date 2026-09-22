@@ -20,19 +20,37 @@
       .join("\n");
   }
 
-  function instructionsFor(questionType) {
+  function instructionsFor(questionType, blanks) {
     switch (questionType) {
       case "multiple-select":
         return 'Several choices are correct. "answer" must be an array of the exact choice labels, for example ["A", "C"].';
       case "fill-in-the-blank":
-        return '"answer" must be only the text that belongs in the blank.';
+        return blanks > 1
+          ? `There are ${blanks} blanks. "answer" must be an array of ${blanks} strings in the order the blanks appear, and nothing else.`
+          : '"answer" must be only the words that belong in the blank, with no sentence around them and no punctuation.';
       case "true-false":
         return '"answer" must be exactly "True" or "False".';
       case "matching":
-        return '"answer" must be an object mapping each left-hand item to its match.';
+        return blanks > 1
+          ? `There are ${blanks} dropdowns. "answer" must be an array of ${blanks} strings, each exactly matching one of that dropdown's listed options.`
+          : '"answer" must be exactly one of the listed options.';
       default:
         return 'Exactly one choice is correct. "answer" must be that choice\'s label, for example "B".';
     }
+  }
+
+  function formatFields(fields) {
+    if (!Array.isArray(fields) || !fields.length) return "";
+
+    const withOptions = fields.filter((field) => field && field.kind === "select");
+    if (!withOptions.length) return "";
+
+    return fields
+      .map((field, index) => {
+        if (!field || field.kind !== "select") return `${index + 1}. (free text)`;
+        return `${index + 1}. one of: ${(field.options || []).join(" | ")}`;
+      })
+      .join("\n");
   }
 
   function buildPrompt(questionData) {
@@ -42,7 +60,7 @@
     parts.push(
       "Answer this question from a McGraw Hill Smartbook assignment."
     );
-    parts.push(instructionsFor(data.questionType));
+    parts.push(instructionsFor(data.questionType, data.blanks || 0));
     parts.push(
       'Reply with one JSON object and nothing else: no preamble, no code fence, no text after it. ' +
         'It must have exactly two keys, "answer" first and "explanation" second. ' +
@@ -58,6 +76,11 @@
     const choices = formatChoices(data.choices);
     if (choices) {
       parts.push(`Choices:\n${choices}`);
+    }
+
+    const fields = formatFields(data.fields);
+    if (fields) {
+      parts.push(`Dropdowns:\n${fields}`);
     }
 
     parts.push('{"answer": ..., "explanation": "..."}');

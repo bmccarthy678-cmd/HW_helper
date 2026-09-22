@@ -95,6 +95,36 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
     return "";
   };
 
+  const collectFields = () => {
+    const nodes = Array.from(
+      document.querySelectorAll(
+        "input[type='text'], input[type='number'], input:not([type]), textarea, select, [contenteditable='true']"
+      )
+    ).filter((node) => {
+      if (!visible(node)) return false;
+      if (node.closest("header, nav, footer")) return false;
+
+      const hint = norm(
+        `${node.getAttribute("placeholder") || ""} ${node.getAttribute("aria-label") || ""} ${node.name || ""}`
+      );
+      if (/search|filter|feedback/i.test(hint)) return false;
+
+      return true;
+    });
+
+    return nodes.map((node) => {
+      if (node.tagName === "SELECT") {
+        return {
+          kind: "select",
+          options: Array.from(node.options)
+            .map((option) => norm(option.textContent))
+            .filter(Boolean),
+        };
+      }
+      return { kind: "text" };
+    });
+  };
+
   const collectChoices = () => {
     const inputs = Array.from(
       document.querySelectorAll("input[type='radio'], input[type='checkbox']")
@@ -152,12 +182,20 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
 
     if (resultScreen) return { resultScreen: true };
 
-    const anchor = choices.length ? choices[0].input : null;
+    const fields = choices.length ? [] : collectFields();
+    const anchor = choices.length
+      ? choices[0].input
+      : fields.length
+        ? document.querySelector(
+            "input[type='text'], input[type='number'], input:not([type]), textarea, select, [contenteditable='true']"
+          )
+        : null;
     const stem = findStem(anchor);
 
-    if (!stem && !choices.length) return null;
+    if (!stem && !choices.length && !fields.length) return null;
 
     const isMulti = choices.some((c) => c.input.type === "checkbox");
+    const hasSelect = fields.some((f) => f.kind === "select");
 
     return {
       questionText: stem,
@@ -165,15 +203,68 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
         label: String.fromCharCode(65 + index),
         text: choice.text,
       })),
-      questionType: !choices.length
-        ? "fill-in-the-blank"
-        : isMulti
+      fields,
+      blanks: fields.length,
+      questionType: choices.length
+        ? isMulti
           ? "multiple-select"
-          : "multiple-choice",
+          : "multiple-choice"
+        : hasSelect
+          ? "matching"
+          : "fill-in-the-blank",
     };
   }
 
-  if (!choices.length) return 0;
+  if (!choices.length) {
+    const fields = Array.from(
+      document.querySelectorAll(
+        "input[type='text'], input[type='number'], input:not([type]), textarea, select, [contenteditable='true']"
+      )
+    ).filter((node) => {
+      if (!visible(node)) return false;
+      if (node.closest("header, nav, footer")) return false;
+      const hint = norm(
+        `${node.getAttribute("placeholder") || ""} ${node.getAttribute("aria-label") || ""} ${node.name || ""}`
+      );
+      return !/search|filter|feedback/i.test(hint);
+    });
+
+    if (!fields.length) return 0;
+
+    const values = Array.isArray(answer) ? answer : [answer];
+    let filled = 0;
+
+    fields.forEach((field, index) => {
+      const value = values[index] != null ? String(values[index]) : null;
+      if (value == null) return;
+
+      field.focus();
+
+      if (field.tagName === "SELECT") {
+        const match = Array.from(field.options).find(
+          (option) => norm(option.textContent).toLowerCase() === norm(value).toLowerCase()
+        );
+        if (!match) return;
+        field.value = match.value;
+      } else if (field.isContentEditable) {
+        field.textContent = value;
+      } else {
+        const proto =
+          field.tagName === "TEXTAREA"
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+        setter.call(field, value);
+      }
+
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+      field.blur();
+      filled += 1;
+    });
+
+    return filled;
+  }
 
   const wanted = (Array.isArray(answer) ? answer : [answer])
     .map((value) => norm(value).toLowerCase())
