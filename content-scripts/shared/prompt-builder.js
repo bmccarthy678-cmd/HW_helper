@@ -30,6 +30,10 @@
           : '"answer" must be only the words that belong in the blank, with no sentence around them and no punctuation.';
       case "true-false":
         return '"answer" must be exactly "True" or "False".';
+      case "matching-dnd":
+        return blanks > 1
+          ? ""
+          : 'Each item on the left takes exactly one of the options. "answer" must be an array with one option per item, in the same order as the items, each copied word for word from the options list.';
       case "matching":
         return blanks > 1
           ? `There are ${blanks} dropdowns. "answer" must be an array of ${blanks} strings, each exactly matching one of that dropdown's listed options.`
@@ -81,6 +85,20 @@
     const fields = formatFields(data.fields);
     if (fields) {
       parts.push(`Dropdowns:\n${fields}`);
+    }
+
+    if (Array.isArray(data.terms) && data.terms.length) {
+      parts.push(
+        `Items to match, in order:\n${data.terms
+          .map((term, index) => `${index + 1}. ${normalize(term)}`)
+          .join("\n")}`
+      );
+    }
+
+    if (Array.isArray(data.options) && data.options.length) {
+      parts.push(
+        `Options:\n${data.options.map((option) => `- ${normalize(option)}`).join("\n")}`
+      );
     }
 
     parts.push('{"answer": ..., "explanation": "..."}');

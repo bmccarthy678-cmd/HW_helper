@@ -263,6 +263,31 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
     return "";
   };
 
+  const collectDraggables = () =>
+    deepQuery('[draggable="true"]').filter(
+      (node) => visible(node) && norm(node.textContent).length > 2
+    );
+
+  const collectZones = () =>
+    deepQuery("div, li, td, section").filter((node) => {
+      if (!visible(node)) return false;
+      if (norm(node.textContent)) return false;
+      if (node.querySelector("*")) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width > 60 && rect.height > 20;
+    });
+
+  const termForZone = (zone) => {
+    let node = parentOf(zone);
+
+    for (let depth = 0; depth < 4 && node; depth += 1, node = parentOf(node)) {
+      const text = norm(node.textContent);
+      if (text && text.length <= 120 && !NOISE.test(text)) return text;
+    }
+
+    return "";
+  };
+
   const collectChoices = () => {
     const inputs = deepQuery("input[type='radio'], input[type='checkbox']").filter(visible);
 
@@ -318,6 +343,24 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
 
     if (resultScreen) return { resultScreen: true };
 
+    const draggables = choices.length ? [] : collectDraggables();
+
+    if (!choices.length && draggables.length >= 2) {
+      const options = draggables.map((node) => norm(node.textContent));
+      const terms = collectZones().map(termForZone).filter(Boolean);
+      const stem = findStem(draggables[0]);
+
+      return {
+        questionText: stem,
+        choices: [],
+        fields: [],
+        blanks: 0,
+        terms,
+        options,
+        questionType: "matching-dnd",
+      };
+    }
+
     const fields = choices.length ? [] : collectFields();
     const anchor = choices.length
       ? choices[0].input
@@ -357,6 +400,78 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
         : hasSelect
           ? "matching"
           : "fill-in-the-blank",
+    };
+  }
+
+  const draggables = choices.length ? [] : collectDraggables();
+
+  if (!choices.length && draggables.length >= 2) {
+    const values = Array.isArray(answer) ? answer : [answer];
+
+    const zones = collectZones();
+
+    if (!zones.length) {
+      return {
+        count: 0,
+        mode: "match",
+        found: draggables.length,
+        detail: "found the cards but no empty slots to drop them in",
+      };
+    }
+
+    const dragTo = (source, target) => {
+      const dt = typeof DataTransfer === "function" ? new DataTransfer() : null;
+      const sRect = source.getBoundingClientRect();
+      const tRect = target.getBoundingClientRect();
+      const from = { clientX: sRect.left + sRect.width / 2, clientY: sRect.top + sRect.height / 2 };
+      const to = { clientX: tRect.left + tRect.width / 2, clientY: tRect.top + tRect.height / 2 };
+      const base = { bubbles: true, cancelable: true, view: window };
+
+      try {
+        source.dispatchEvent(new PointerEvent("pointerdown", { ...base, ...from, buttons: 1 }));
+        source.dispatchEvent(new MouseEvent("mousedown", { ...base, ...from, buttons: 1 }));
+        document.dispatchEvent(new PointerEvent("pointermove", { ...base, ...to, buttons: 1 }));
+        document.dispatchEvent(new MouseEvent("mousemove", { ...base, ...to, buttons: 1 }));
+        target.dispatchEvent(new PointerEvent("pointerup", { ...base, ...to }));
+        target.dispatchEvent(new MouseEvent("mouseup", { ...base, ...to }));
+      } catch (error) {
+        // fall through to the HTML5 sequence
+      }
+
+      try {
+        const opts = dt ? { ...base, dataTransfer: dt } : base;
+        source.dispatchEvent(new DragEvent("dragstart", { ...opts, ...from }));
+        target.dispatchEvent(new DragEvent("dragenter", { ...opts, ...to }));
+        target.dispatchEvent(new DragEvent("dragover", { ...opts, ...to }));
+        target.dispatchEvent(new DragEvent("drop", { ...opts, ...to }));
+        source.dispatchEvent(new DragEvent("dragend", { ...opts, ...to }));
+      } catch (error) {
+        return false;
+      }
+
+      return true;
+    };
+
+    let moved = 0;
+    values.forEach((value, index) => {
+      const wantedText = norm(value).toLowerCase();
+      const card = draggables.find(
+        (node) => norm(node.textContent).toLowerCase() === wantedText
+      ) || draggables.find(
+        (node) => norm(node.textContent).toLowerCase().includes(wantedText)
+      );
+
+      const zone = zones[index];
+      if (!card || !zone) return;
+      if (dragTo(card, zone)) moved += 1;
+    });
+
+    return {
+      count: moved,
+      mode: "match",
+      found: draggables.length,
+      detail: moved ? "" : "drag did not register",
+      mapping: values,
     };
   }
 
@@ -745,6 +860,7 @@ async function handleAskQuestion(message, sender) {
     questionType: found.question.questionType,
     questionText: found.question.questionText,
     choices: found.question.choices,
+    terms: found.question.terms || [],
     assistant: settings.assistant,
     autoSelect: settings.autoSelect,
     confidence: settings.confidence,
@@ -843,15 +959,27 @@ async function handleAssistantResponse(message) {
   }
 
   if (!clicked) {
-    const isField = applyReport && applyReport.mode === "field";
+    const mode = applyReport ? applyReport.mode : "choice";
     const detail = applyReport && applyReport.detail ? ` (${applyReport.detail})` : "";
+
+    let text;
+    if (mode === "match") {
+      const pairs = (pending.terms || []).length
+        ? pending.terms
+            .map((term, index) => `${term} -> ${(Array.isArray(parsed.answer) ? parsed.answer : [])[index] || "?"}`)
+            .join("; ")
+        : answerText;
+      text = `Could not drag the cards${detail}. Place them yourself: ${pairs}`;
+    } else if (mode === "field") {
+      text = `Could not enter the answer${detail}. Answer: ${answerText}`;
+    } else {
+      text = `No choice matched${detail}. Answer: ${answerText}`;
+    }
 
     await notifySource(pending.sourceTabId, {
       type: "status",
       outcome: "failed",
-      text: isField
-        ? `Could not enter the answer${detail}. Answer: ${answerText}`
-        : `No choice matched${detail}. Answer: ${answerText}`,
+      text,
     });
     return;
   }
@@ -905,7 +1033,9 @@ async function handleAssistantResponse(message) {
     text: `${
       applyReport && applyReport.mode === "field"
         ? `Typed ${clicked} answer${clicked === 1 ? "" : "s"}.`
-        : `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.`
+        : applyReport && applyReport.mode === "match"
+          ? `Matched ${clicked} card${clicked === 1 ? "" : "s"}.`
+          : `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.`
     }${note}${
       verdict ? ` Marked ${verdict}.` : ""
     } ${parsed.explanation || ""}`,

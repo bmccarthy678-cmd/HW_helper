@@ -81,6 +81,16 @@ for an array so each value lands in the right field.
 Inputs inside a header, nav or footer are ignored, as are search and filter
 boxes, so the page's own controls are never mistaken for answer fields.
 
+## Matching questions
+
+Drag and drop matching is handled too: the cards and the empty slots are found
+from the page, the assistant is asked for one option per item in slot order, and
+each card is dragged into place. Both a pointer drag and the HTML5 drag sequence
+are sent, since courseware uses one or the other.
+
+If the drag does not register, the status chip prints the pairing so it can be
+placed by hand rather than leaving the question unanswered.
+
 ## Notes
 
 Every answered question is recorded: the question text, the choices, which one
