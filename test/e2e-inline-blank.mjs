@@ -12,6 +12,11 @@ const SMARTBOOK = `<!DOCTYPE html><html><body style="margin:0">
 <div class="sc-stem">In the standard present and future value tables, and in all the default settings on a
 financial calculator, the assumption is that cash flows occur at the
 <input type="text" id="blank"> (beginning/end) of each period.</div>
+<div id="shadowhost"></div>
+<script>
+const host=document.getElementById("shadowhost");
+host.attachShadow({mode:"open"});
+</script>
 <div><span>Need help? Review these concept resources.</span></div>
 <footer><span>Rate your confidence to submit your answer.</span>
 <button id="hi" disabled>High</button><button>Medium</button><button>Low</button></footer>

@@ -61,6 +61,99 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   const NOISE =
     /^(exit assignment|concepts? completed|need help|read about the concept|rate your confidence|high|medium|low|reading|privacy center|terms of use|multiple choice question|fill in the blank question|select all that apply|ask ai|next|submit|back)\b/i;
 
+  const deepQuery = (selector) => {
+    const out = [];
+
+    const walk = (root) => {
+      let found = [];
+      try {
+        found = Array.from(root.querySelectorAll(selector));
+      } catch (error) {
+        found = [];
+      }
+      out.push(...found);
+
+      let all = [];
+      try {
+        all = Array.from(root.querySelectorAll("*"));
+      } catch (error) {
+        all = [];
+      }
+      all.forEach((el) => {
+        if (el.shadowRoot) walk(el.shadowRoot);
+      });
+    };
+
+    walk(document);
+    return out;
+  };
+
+  const FIELD_SELECTOR =
+    "input[type='text'], input[type='number'], input[type='tel'], input:not([type]), textarea, select, [contenteditable='true'], [role='textbox']";
+
+  const usableField = (node) => {
+    if (!visible(node)) return false;
+    if (node.disabled || node.readOnly) return false;
+    if (node.closest && node.closest("header, nav, footer")) return false;
+
+    const hint = norm(
+      `${node.getAttribute("placeholder") || ""} ${node.getAttribute("aria-label") || ""} ${node.name || ""}`
+    );
+    return !/search|filter|feedback/i.test(hint);
+  };
+
+  const typeInto = (field, value) => {
+    field.focus();
+    field.click();
+
+    if (field.tagName === "SELECT") {
+      const match = Array.from(field.options).find(
+        (option) => norm(option.textContent).toLowerCase() === norm(value).toLowerCase()
+      );
+      if (!match) return false;
+      field.value = match.value;
+    } else if (field.isContentEditable || field.getAttribute("role") === "textbox") {
+      field.textContent = value;
+    } else {
+      const proto =
+        field.tagName === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(field, value);
+      } else {
+        field.value = value;
+      }
+    }
+
+    const last = value.slice(-1) || "a";
+    const keyInit = { key: last, bubbles: true, cancelable: true };
+    try {
+      field.dispatchEvent(new KeyboardEvent("keydown", keyInit));
+      field.dispatchEvent(new KeyboardEvent("keypress", keyInit));
+    } catch (error) {
+      // keyboard events are a nicety, not a requirement
+    }
+
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+
+    try {
+      field.dispatchEvent(new KeyboardEvent("keyup", keyInit));
+    } catch (error) {
+      // ignore
+    }
+
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+    field.blur();
+
+    if (field.tagName === "SELECT") return true;
+    if (field.isContentEditable || field.getAttribute("role") === "textbox") {
+      return norm(field.textContent) === norm(value);
+    }
+    return field.value === value;
+  };
+
   const visible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
@@ -96,21 +189,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   };
 
   const collectFields = () => {
-    const nodes = Array.from(
-      document.querySelectorAll(
-        "input[type='text'], input[type='number'], input:not([type]), textarea, select, [contenteditable='true']"
-      )
-    ).filter((node) => {
-      if (!visible(node)) return false;
-      if (node.closest("header, nav, footer")) return false;
-
-      const hint = norm(
-        `${node.getAttribute("placeholder") || ""} ${node.getAttribute("aria-label") || ""} ${node.name || ""}`
-      );
-      if (/search|filter|feedback/i.test(hint)) return false;
-
-      return true;
-    });
+    const nodes = deepQuery(FIELD_SELECTOR).filter(usableField);
 
     return nodes.map((node) => {
       if (node.tagName === "SELECT") {
@@ -146,9 +225,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   };
 
   const collectChoices = () => {
-    const inputs = Array.from(
-      document.querySelectorAll("input[type='radio'], input[type='checkbox']")
-    ).filter(visible);
+    const inputs = deepQuery("input[type='radio'], input[type='checkbox']").filter(visible);
 
     return inputs
       .map((input) => ({ input, text: labelTextFor(input) }))
@@ -245,54 +322,41 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   }
 
   if (!choices.length) {
-    const fields = Array.from(
-      document.querySelectorAll(
-        "input[type='text'], input[type='number'], input:not([type]), textarea, select, [contenteditable='true']"
-      )
-    ).filter((node) => {
-      if (!visible(node)) return false;
-      if (node.closest("header, nav, footer")) return false;
-      const hint = norm(
-        `${node.getAttribute("placeholder") || ""} ${node.getAttribute("aria-label") || ""} ${node.name || ""}`
-      );
-      return !/search|filter|feedback/i.test(hint);
-    });
+    const fields = deepQuery(FIELD_SELECTOR).filter(usableField);
 
-    if (!fields.length) return 0;
+    if (!fields.length) {
+      const anyField = deepQuery(FIELD_SELECTOR).length;
+      return {
+        count: 0,
+        mode: "field",
+        found: 0,
+        detail: anyField
+          ? `${anyField} field(s) on the page but none usable`
+          : "no answer field found",
+      };
+    }
 
     const values = Array.isArray(answer) ? answer : [answer];
     let filled = 0;
+    const misses = [];
 
     fields.forEach((field, index) => {
       const value = values[index] != null ? String(values[index]) : null;
       if (value == null) return;
 
-      field.focus();
-
-      if (field.tagName === "SELECT") {
-        const match = Array.from(field.options).find(
-          (option) => norm(option.textContent).toLowerCase() === norm(value).toLowerCase()
-        );
-        if (!match) return;
-        field.value = match.value;
-      } else if (field.isContentEditable) {
-        field.textContent = value;
+      if (typeInto(field, value)) {
+        filled += 1;
       } else {
-        const proto =
-          field.tagName === "TEXTAREA"
-            ? window.HTMLTextAreaElement.prototype
-            : window.HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
-        setter.call(field, value);
+        misses.push(`${field.tagName.toLowerCase()}${field.type ? ":" + field.type : ""}`);
       }
-
-      field.dispatchEvent(new Event("input", { bubbles: true }));
-      field.dispatchEvent(new Event("change", { bubbles: true }));
-      field.blur();
-      filled += 1;
     });
 
-    return filled;
+    return {
+      count: filled,
+      mode: "field",
+      found: fields.length,
+      detail: misses.length ? `value did not stick in ${misses.join(", ")}` : "",
+    };
   }
 
   const wanted = (Array.isArray(answer) ? answer : [answer])
@@ -351,7 +415,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
     }
   });
 
-  return clicked;
+  return { count: clicked, mode: "choice", found: choices.length, detail: "" };
 }
 
 async function nextAgent() {
@@ -715,6 +779,7 @@ async function handleAssistantResponse(message) {
   const config = SITES[pending.site] || SITES.smartbook;
 
   let clicked = 0;
+  let applyReport = null;
   try {
     const results = await chrome.scripting.executeScript({
       target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
@@ -726,7 +791,9 @@ async function handleAssistantResponse(message) {
         pending.questionType === "multiple-select",
       ],
     });
-    clicked = results && results[0] ? results[0].result : 0;
+    const report = results && results[0] ? results[0].result : null;
+    clicked = report ? report.count : 0;
+    applyReport = report;
   } catch (error) {
     await notifySource(pending.sourceTabId, {
       type: "status",
@@ -737,10 +804,15 @@ async function handleAssistantResponse(message) {
   }
 
   if (!clicked) {
+    const isField = applyReport && applyReport.mode === "field";
+    const detail = applyReport && applyReport.detail ? ` (${applyReport.detail})` : "";
+
     await notifySource(pending.sourceTabId, {
       type: "status",
       outcome: "failed",
-      text: `No choice matched. Answer: ${answerText}`,
+      text: isField
+        ? `Could not enter the answer${detail}. Answer: ${answerText}`
+        : `No choice matched${detail}. Answer: ${answerText}`,
     });
     return;
   }
@@ -791,7 +863,11 @@ async function handleAssistantResponse(message) {
     outcome: "selected",
     advanced,
     verdict,
-    text: `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.${note}${
+    text: `${
+      applyReport && applyReport.mode === "field"
+        ? `Typed ${clicked} answer${clicked === 1 ? "" : "s"}.`
+        : `Selected ${clicked} choice${clicked === 1 ? "" : "s"}.`
+    }${note}${
       verdict ? ` Marked ${verdict}.` : ""
     } ${parsed.explanation || ""}`,
   });
