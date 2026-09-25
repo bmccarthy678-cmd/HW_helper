@@ -4,6 +4,8 @@ const DEFAULT_SETTINGS = {
   focusAssistantTab: false,
   confidence: "off",
   advance: false,
+  images: false,
+  verify: false,
 };
 
 const fields = {
@@ -12,6 +14,8 @@ const fields = {
   focusAssistantTab: document.getElementById("focusAssistantTab"),
   confidence: document.getElementById("confidence"),
   advance: document.getElementById("advance"),
+  images: document.getElementById("images"),
+  verify: document.getElementById("verify"),
 };
 
 const savedNote = document.getElementById("saved");
@@ -39,6 +43,8 @@ async function load() {
   fields.focusAssistantTab.checked = Boolean(settings.focusAssistantTab);
   fields.confidence.value = settings.confidence;
   fields.advance.checked = Boolean(settings.advance);
+  fields.images.checked = Boolean(settings.images);
+  fields.verify.checked = Boolean(settings.verify);
 }
 
 function persist() {
@@ -49,6 +55,8 @@ function persist() {
       focusAssistantTab: fields.focusAssistantTab.checked,
       confidence: fields.confidence.value,
       advance: fields.advance.checked,
+      images: fields.images.checked,
+      verify: fields.verify.checked,
     })
     .then(showSaved)
     .catch((error) => console.error("Could not save settings:", error));

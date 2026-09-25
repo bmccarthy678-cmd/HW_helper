@@ -103,6 +103,30 @@ are sent, since courseware uses one or the other.
 If the drag does not register, the status chip prints the pairing so it can be
 placed by hand rather than leaving the question unanswered.
 
+## Diagrams
+
+A question carrying a diagram is answered rather than skipped when **Send
+diagrams** is on. The image is read from the page itself - fetched from its own
+source with credentials, so an image behind a login still works - and pasted
+into the assistant's composer alongside the question text. An inline SVG is
+rasterised first, since assistants handle pasted SVG poorly.
+
+Nothing is screenshotted, so no capture permission is needed and the assistant
+sees the diagram itself rather than a picture of the screen. If the image cannot
+be read, the question is skipped with a reason instead of being answered from
+its text alone.
+
+## Double checking
+
+With **Ask each question twice** on, every question is asked twice in separate
+exchanges and the answers compared, ignoring case, spacing and the order of a
+multiple answer. Matching answers are applied. Differing ones trigger a third
+ask, and the majority wins. Three different answers leaves the question
+unanswered and prints all three.
+
+It roughly doubles the time per question, and agreeing twice is not the same as
+being right - it catches coin flips, not settled misconceptions.
+
 ## Notes
 
 Every answered question is recorded: the question text, the choices, which one

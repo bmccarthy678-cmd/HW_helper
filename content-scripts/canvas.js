@@ -11,6 +11,7 @@ let running = false;
 let answered = 0;
 let blockIndex = 0;
 let skipped = [];
+let confirmed = 0;
 let cycleResolve = null;
 
 function ensureUi() {
@@ -129,6 +130,7 @@ async function onClick() {
   answered = 0;
   blockIndex = 0;
   skipped = [];
+  confirmed = 0;
   running = true;
   paintButton();
   runLoop();
@@ -251,6 +253,7 @@ async function runLoop() {
 
     failures = 0;
     answered += 1;
+    if (status.verified) confirmed += 1;
     blockIndex += 1;
     await delay(CYCLE_GAP_MS);
   }
@@ -259,11 +262,17 @@ async function runLoop() {
 }
 
 function finish() {
+  const checked =
+    confirmed && confirmed === answered
+      ? " Each confirmed twice."
+      : confirmed
+        ? ` ${confirmed} confirmed twice.`
+        : "";
   const note = skipped.length
     ? ` Skipped ${skipped.length} with diagrams: ${skipped.join(", ")}.`
     : "";
   stopRun(
-    `Done. Answered ${answered} question${answered === 1 ? "" : "s"}.${note} Review, then submit yourself.`
+    `Done. Answered ${answered} question${answered === 1 ? "" : "s"}.${checked}${note} Review, then submit yourself.`
   );
 }
 
@@ -279,6 +288,11 @@ function scrollToQuestion(index) {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== "status") return;
+
+  if (message.outcome === "checking") {
+    setStatus(message.text, 0);
+    return;
+  }
 
   clearWatchdog();
 

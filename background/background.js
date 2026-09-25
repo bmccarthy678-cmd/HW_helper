@@ -387,16 +387,22 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
 
   const choices = collectChoices();
 
-  if (op === "scrape") {
-    if (usePages && hasDiagram()) {
-      return {
-        needsImage: true,
-        index: blockIndex,
-        total: blocks.length,
-        questionText: textWithBlanks(scope).slice(0, 300),
-      };
+  if (op === "reveal") {
+    const target = scope || document.body;
+    if (target && target.scrollIntoView) {
+      target.scrollIntoView({ block: "center", inline: "nearest" });
     }
+    const rect = target.getBoundingClientRect();
+    return {
+      x: Math.max(0, rect.left),
+      y: Math.max(0, rect.top),
+      width: Math.min(rect.width, window.innerWidth),
+      height: Math.min(rect.height, window.innerHeight - Math.max(0, rect.top)),
+      ratio: window.devicePixelRatio || 1,
+    };
+  }
 
+  if (op === "scrape") {
     const resultScreen = Array.from(
       document.querySelectorAll("button, [role='button'], input[type='button']")
     ).some((node) => {
@@ -445,8 +451,25 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     const isMulti = choices.some((c) => c.input.type === "checkbox");
     const hasSelect = fields.some((f) => f.kind === "select");
 
+    let diagram = null;
+    if (hasDiagram()) {
+      const target = scope || document.body;
+      const rect = target.getBoundingClientRect();
+      diagram = {
+        x: Math.max(0, rect.left),
+        y: Math.max(0, rect.top),
+        width: Math.min(rect.width, window.innerWidth),
+        height: Math.min(rect.height, window.innerHeight),
+        ratio: window.devicePixelRatio || 1,
+        onScreen: rect.top >= 0 && rect.bottom <= window.innerHeight,
+      };
+    }
+
     return {
       questionText: stem,
+      diagram,
+      index: usePages ? blockIndex : 0,
+      total: usePages ? blocks.length : 1,
       choices: choices.map((choice, index) => ({
         label: String.fromCharCode(65 + index),
         text: choice.text,
@@ -825,6 +848,8 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
 
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
+  images: false,
+  verify: false,
   autoSelect: true,
   focusAssistantTab: false,
   confidence: "off",
@@ -896,6 +921,102 @@ async function sendWhenReady(tabId, message, attempts = 24) {
   );
 }
 
+async function grabImages(blockSelectors, blockIndex) {
+  const findBlock = () => {
+    if (typeof blockIndex !== "number") return null;
+    for (const selector of blockSelectors || []) {
+      let nodes = [];
+      try {
+        nodes = Array.from(document.querySelectorAll(selector));
+      } catch (error) {
+        continue;
+      }
+      nodes = nodes.filter((n) => n.offsetParent !== null || n.getClientRects().length);
+      if (nodes.length) return nodes[blockIndex] || null;
+    }
+    return null;
+  };
+
+  const root = findBlock() || document.body;
+  const big = (node) => {
+    const rect = node.getBoundingClientRect();
+    const w = node.naturalWidth || rect.width;
+    const h = node.naturalHeight || rect.height;
+    return w >= 80 && h >= 80;
+  };
+
+  const toDataUrl = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+  const rasterise = (dataUrl, width, height) =>
+    new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = width || image.naturalWidth;
+          canvas.height = height || image.naturalHeight;
+          canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/png"));
+        } catch (error) {
+          resolve(null);
+        }
+      };
+      image.onerror = () => resolve(null);
+      image.src = dataUrl;
+    });
+
+  const out = [];
+
+  for (const node of Array.from(root.querySelectorAll("img")).filter(big).slice(0, 3)) {
+    const src = node.currentSrc || node.src;
+    if (!src) continue;
+
+    try {
+      const response = await fetch(src, { credentials: "include" });
+      const blob = await response.blob();
+      const dataUrl = await toDataUrl(blob);
+
+      if (dataUrl && dataUrl.startsWith("data:image/svg")) {
+        const png = await rasterise(dataUrl, node.naturalWidth || 600, node.naturalHeight || 400);
+        out.push(png || dataUrl);
+      } else if (dataUrl) {
+        out.push(dataUrl);
+      }
+    } catch (error) {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = node.naturalWidth;
+        canvas.height = node.naturalHeight;
+        canvas.getContext("2d").drawImage(node, 0, 0);
+        out.push(canvas.toDataURL("image/png"));
+      } catch (inner) {
+        // tainted or unreachable; skip this one
+      }
+    }
+  }
+
+  for (const node of Array.from(root.querySelectorAll("svg")).filter(big).slice(0, 2)) {
+    try {
+      const markup = new XMLSerializer().serializeToString(node);
+      const rect = node.getBoundingClientRect();
+      const encoded =
+        "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(markup)));
+      const png = await rasterise(encoded, rect.width, rect.height);
+      if (png) out.push(png);
+    } catch (error) {
+      // ignore
+    }
+  }
+
+  return out;
+}
+
 async function handleAskQuestion(message, sender) {
   if (!sender.tab || sender.tab.id == null) {
     throw new Error("Question did not come from a tab");
@@ -910,16 +1031,6 @@ async function handleAskQuestion(message, sender) {
 
   if (found && found.exhausted) {
     return { ok: true, done: true, status: `Reached the end of the page (${found.total} questions).` };
-  }
-
-  if (found && found.needsImage) {
-    return {
-      ok: true,
-      skipped: true,
-      index: found.index,
-      total: found.total,
-      status: `Question ${found.index + 1} has a diagram - skipped so it is not guessed at.`,
-    };
   }
 
   if (!found) {
@@ -950,6 +1061,42 @@ async function handleAskQuestion(message, sender) {
   const settings = await getSettings();
   const assistant = ASSISTANTS[settings.assistant];
 
+  let image = null;
+  if (found.question.diagram) {
+    if (!settings.images) {
+      return {
+        ok: true,
+        skipped: true,
+        index: found.question.index,
+        status: `Question ${found.question.index + 1} has a diagram - skipped. Turn on Send diagrams to answer it.`,
+      };
+    }
+
+    try {
+      const grabbed = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [found.frameId] },
+        func: grabImages,
+        args: [config.blocks || [], blockIndex ?? null],
+      });
+
+      const images = (grabbed && grabbed[0] && grabbed[0].result) || [];
+      if (!images.length) throw new Error("the diagram could not be read from the page");
+      image = images[0];
+    } catch (error) {
+      return {
+        ok: true,
+        skipped: true,
+        index: found.question.index,
+        status: `Question ${found.question.index + 1} has a diagram that could not be captured (${error.message}) - skipped.`,
+      };
+    }
+  }
+
+  const tab = await ensureAssistantTab(
+    settings.assistant,
+    settings.focusAssistantTab
+  );
+
   await setPending({
     sourceTabId: tabId,
     frameId: found.frameId,
@@ -960,22 +1107,24 @@ async function handleAskQuestion(message, sender) {
     choices: found.question.choices,
     terms: found.question.terms || [],
     assistant: settings.assistant,
+    assistantTabId: tab.id,
+    verify: settings.verify,
+    round: 1,
+    priorAnswers: [],
+    question: found.question,
+    image,
     autoSelect: settings.autoSelect,
     confidence: settings.confidence,
     advance: settings.advance,
     startedAt: Date.now(),
   });
 
-  const tab = await ensureAssistantTab(
-    settings.assistant,
-    settings.focusAssistantTab
-  );
-
   let ack;
   try {
     ack = await sendWhenReady(tab.id, {
       type: "receiveQuestion",
       question: found.question,
+      image,
     });
   } catch (error) {
     await takePending();
@@ -1002,6 +1151,17 @@ function parseAnswer(raw) {
   }
 }
 
+function sameAnswer(a, b) {
+  const flatten = (value) =>
+    (Array.isArray(value) ? value : [value])
+      .map((item) => String(item == null ? "" : item).replace(/\s+/g, " ").trim().toLowerCase())
+      .filter(Boolean)
+      .sort()
+      .join("|");
+
+  return flatten(a) === flatten(b);
+}
+
 async function handleAssistantResponse(message) {
   const pending = await takePending();
   if (!pending) return;
@@ -1019,6 +1179,54 @@ async function handleAssistantResponse(message) {
   }
 
   const answerText = JSON.stringify(parsed.answer);
+
+  if (pending.verify && pending.round < 3) {
+    const priorAnswers = [...(pending.priorAnswers || []), parsed.answer];
+    const agreed = priorAnswers.length >= 2 &&
+      priorAnswers.slice(0, -1).some((earlier) => sameAnswer(earlier, parsed.answer));
+
+    if (!agreed) {
+      await setPending({ ...pending, round: pending.round + 1, priorAnswers });
+
+      await notifySource(pending.sourceTabId, {
+        type: "status",
+        outcome: "checking",
+        text: priorAnswers.length === 1
+          ? "Checking that answer a second time..."
+          : `Two different answers so far - asking once more.`,
+      });
+
+      try {
+        await sendWhenReady(pending.assistantTabId, {
+          type: "receiveQuestion",
+          question: pending.question,
+          image: pending.image,
+        });
+        return;
+      } catch (error) {
+        await notifySource(pending.sourceTabId, {
+          type: "status",
+          outcome: "failed",
+          text: `Could not re-ask the question: ${error.message}`,
+        });
+        return;
+      }
+    }
+  }
+
+  if (pending.verify && pending.round >= 3) {
+    const all = [...(pending.priorAnswers || []), parsed.answer];
+    const agreed = all.some((a, i) => all.some((b, j) => i !== j && sameAnswer(a, b)));
+
+    if (!agreed) {
+      await notifySource(pending.sourceTabId, {
+        type: "status",
+        outcome: "failed",
+        text: `Three different answers - left unanswered: ${all.map((a) => JSON.stringify(a)).join(" / ")}`,
+      });
+      return;
+    }
+  }
 
   if (!pending.autoSelect) {
     await notifySource(pending.sourceTabId, {
@@ -1130,8 +1338,9 @@ async function handleAssistantResponse(message) {
     type: "status",
     outcome: "selected",
     advanced,
+    verified: Boolean(pending.verify),
     verdict,
-    text: `${
+    text: `${pending.verify ? "Confirmed twice. " : ""}${
       applyReport && applyReport.mode === "field"
         ? `Typed ${clicked} answer${clicked === 1 ? "" : "s"}.`
         : applyReport && applyReport.mode === "match"

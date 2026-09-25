@@ -253,6 +253,11 @@ async function runLoop() {
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== "status") return;
 
+  if (message.outcome === "checking") {
+    setStatus(message.text, 0);
+    return;
+  }
+
   clearWatchdog();
 
   if (!running) setBusy(false);

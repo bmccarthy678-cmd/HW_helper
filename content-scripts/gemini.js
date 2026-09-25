@@ -13,7 +13,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     messageCountAtQuestion = messages.length;
     hasResponded = false;
 
-    insertQuestion(message.question)
+    insertQuestion(message.question, message.image)
       .then(() => sendResponse({ received: true, status: "processing" }))
       .catch((error) =>
         sendResponse({ received: false, error: error.message })
@@ -55,7 +55,33 @@ function waitForIdle(timeout = 120000) {
   });
 }
 
-async function insertQuestion(questionData) {
+async function attachImage(composer, dataUrl) {
+  if (!dataUrl) return false;
+
+  try {
+    const blob = await (await fetch(dataUrl)).blob();
+    const file = new File([blob], "question.png", { type: "image/png" });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+
+    composer.focus();
+    composer.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      })
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    return true;
+  } catch (error) {
+    console.error("Could not attach the diagram:", error);
+    return false;
+  }
+}
+
+async function insertQuestion(questionData, image) {
   const text = window.AutoMcGraw.buildPrompt(questionData);
 
   await waitForIdle();
@@ -67,7 +93,8 @@ async function insertQuestion(questionData) {
       return;
     }
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      await attachImage(inputArea, image);
       inputArea.focus();
       inputArea.innerHTML = window.AutoMcGraw.toParagraphs(text);
       inputArea.dispatchEvent(new Event("input", { bubbles: true }));
