@@ -124,7 +124,13 @@ multiple answer. Matching answers are applied. Differing ones trigger a third
 ask, and the majority wins. Three different answers leaves the question
 unanswered and prints all three.
 
-It roughly doubles the time per question, and agreeing twice is not the same as
+A question carrying a diagram is always asked twice, whether or not the setting
+is on, and the image is re-sent each round so the second opinion sees the same
+picture. Reading a chart is the least reliable thing the assistant does here, so
+that is where the extra pass is worth its cost.
+
+Turning the setting on extends the same treatment to text questions, which
+roughly doubles the time per question, and agreeing twice is not the same as
 being right - it catches coin flips, not settled misconceptions.
 
 ## Notes

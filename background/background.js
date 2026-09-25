@@ -1117,7 +1117,8 @@ async function handleAskQuestion(message, sender) {
     terms: found.question.terms || [],
     assistant: settings.assistant,
     assistantTabId: tab.id,
-    verify: settings.verify,
+    verify: settings.verify || Boolean(image),
+    verifyReason: image && !settings.verify ? "diagram" : null,
     round: 1,
     priorAnswers: [],
     question: found.question,
@@ -1201,8 +1202,10 @@ async function handleAssistantResponse(message) {
         type: "status",
         outcome: "checking",
         text: priorAnswers.length === 1
-          ? "Checking that answer a second time..."
-          : `Two different answers so far - asking once more.`,
+          ? pending.verifyReason === "diagram"
+            ? "Diagram question - checking that answer a second time..."
+            : "Checking that answer a second time..."
+          : "Two different answers so far - asking once more.",
       });
 
       try {
@@ -1349,7 +1352,7 @@ async function handleAssistantResponse(message) {
     advanced,
     verified: Boolean(pending.verify),
     verdict,
-    text: `${pending.verify ? "Confirmed twice. " : ""}${
+    text: `${pending.verify ? (pending.verifyReason === "diagram" ? "Diagram, confirmed twice. " : "Confirmed twice. ") : ""}${
       applyReport && applyReport.mode === "field"
         ? `Typed ${clicked} answer${clicked === 1 ? "" : "s"}.`
         : applyReport && applyReport.mode === "match"
