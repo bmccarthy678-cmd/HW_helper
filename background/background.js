@@ -1001,6 +1001,15 @@ async function grabImages(blockSelectors, blockIndex) {
     }
   }
 
+  for (const node of Array.from(root.querySelectorAll("canvas")).filter(big).slice(0, 2)) {
+    try {
+      const url = node.toDataURL("image/png");
+      if (url && url.length > 512) out.push(url);
+    } catch (error) {
+      // a canvas tainted by cross-origin drawing cannot be read
+    }
+  }
+
   for (const node of Array.from(root.querySelectorAll("svg")).filter(big).slice(0, 2)) {
     try {
       const markup = new XMLSerializer().serializeToString(node);
