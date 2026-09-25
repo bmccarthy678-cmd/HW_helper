@@ -20,7 +20,23 @@ const ASSISTANTS = {
 };
 
 const SITES = {
+  canvas: {
+    mode: "page",
+    blocks: [
+      ".question_holder",
+      ".display_question",
+      "[id^='question_']",
+      ".quiz_question",
+    ],
+    question: [
+      ".question_text",
+      "[class*='questionText']",
+      ".text_holder",
+    ],
+  },
   smartbook: {
+    mode: "single",
+    blocks: [],
     question: [
       "[data-automation-id='question-stem']",
       "[class*='questionStem']",
@@ -39,6 +55,8 @@ const SITES = {
     ],
   },
   ezto: {
+    mode: "single",
+    blocks: [],
     question: [
       "[class*='questionText']",
       "[class*='question-text']",
@@ -55,13 +73,13 @@ const SITES = {
   },
 };
 
-function pageAgent(op, questionSelectors, answer, allowMultiple) {
+function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors, blockIndex) {
   const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
 
   const NOISE =
-    /^(exit assignment|concepts? completed|need help|read about the concept|rate your confidence|high|medium|low|reading|privacy center|terms of use|multiple choice question|fill in the blank question|select all that apply|ask ai|next|submit|back)\b/i;
+    /^(exit assignment|concepts? completed|need help|read about the concept|rate your confidence|high|medium|low|reading|privacy center|terms of use|multiple choice question|fill in the blank question|ask ai|next|submit|back)\b/i;
 
-  const deepQuery = (selector) => {
+  const deepQuery = (selector, scope) => {
     const out = [];
 
     const walk = (root) => {
@@ -84,8 +102,41 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
       });
     };
 
-    walk(document);
+    walk(scope || document);
     return out;
+  };
+
+  const findBlocks = () => {
+    for (const selector of blockSelectors || []) {
+      let nodes = [];
+      try {
+        nodes = Array.from(document.querySelectorAll(selector));
+      } catch (error) {
+        continue;
+      }
+      nodes = nodes.filter((node) => node.offsetParent !== null || node.getClientRects().length);
+      if (nodes.length) return nodes;
+    }
+    return [];
+  };
+
+  const blocks = findBlocks();
+  const usePages = blocks.length > 0 && typeof blockIndex === "number";
+  const scope = usePages ? blocks[blockIndex] : null;
+
+  if (usePages && !scope) {
+    return op === "scrape" ? { exhausted: true, total: blocks.length } : { count: 0, mode: "none" };
+  }
+
+  const hasDiagram = () => {
+    const root = scope || document;
+    return Array.from(root.querySelectorAll("img, canvas, svg")).some((node) => {
+      if (!visible(node)) return false;
+      const rect = node.getBoundingClientRect();
+      const w = node.naturalWidth || rect.width;
+      const h = node.naturalHeight || rect.height;
+      return w >= 80 && h >= 80;
+    });
   };
 
   const FIELD_SELECTOR =
@@ -189,7 +240,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   };
 
   const collectFields = () => {
-    const nodes = deepQuery(FIELD_SELECTOR).filter(usableField);
+    const nodes = deepQuery(FIELD_SELECTOR, scope).filter(usableField);
 
     return nodes.map((node) => {
       if (node.tagName === "SELECT") {
@@ -256,6 +307,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
     let node = parentOf(field);
 
     for (let depth = 0; depth < 8 && node; depth += 1, node = parentOf(node)) {
+      if (scope && !scope.contains(node)) return "";
       const text = textWithBlanks(node);
       if (text.length >= 15 && !NOISE.test(text)) return text;
     }
@@ -264,12 +316,12 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   };
 
   const collectDraggables = () =>
-    deepQuery('[draggable="true"]').filter(
+    deepQuery('[draggable="true"]', scope).filter(
       (node) => visible(node) && norm(node.textContent).length > 2
     );
 
   const collectZones = () =>
-    deepQuery("div, li, td, section").filter((node) => {
+    deepQuery("div, li, td, section", scope).filter((node) => {
       if (!visible(node)) return false;
       if (norm(node.textContent)) return false;
       if (node.querySelector("*")) return false;
@@ -289,7 +341,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   };
 
   const collectChoices = () => {
-    const inputs = deepQuery("input[type='radio'], input[type='checkbox']").filter(visible);
+    const inputs = deepQuery("input[type='radio'], input[type='checkbox']", scope).filter(visible);
 
     return inputs
       .map((input) => ({ input, text: labelTextFor(input) }))
@@ -297,11 +349,13 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   };
 
   const findStem = (anchor) => {
+    const root = scope || document;
+
     for (const selector of questionSelectors || []) {
       try {
-        const node = document.querySelector(selector);
+        const node = root.querySelector(selector);
         const text = node ? norm(node.textContent) : "";
-        if (text && !NOISE.test(text)) return text;
+        if (text) return text;
       } catch (error) {
         continue;
       }
@@ -310,7 +364,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
     if (!anchor) return "";
 
     const candidates = Array.from(
-      document.querySelectorAll("p, div, span, h1, h2, h3, h4, legend, li")
+      root.querySelectorAll("p, div, span, h1, h2, h3, h4, legend, li")
     );
 
     let best = "";
@@ -334,6 +388,15 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   const choices = collectChoices();
 
   if (op === "scrape") {
+    if (usePages && hasDiagram()) {
+      return {
+        needsImage: true,
+        index: blockIndex,
+        total: blocks.length,
+        questionText: textWithBlanks(scope).slice(0, 300),
+      };
+    }
+
     const resultScreen = Array.from(
       document.querySelectorAll("button, [role='button'], input[type='button']")
     ).some((node) => {
@@ -476,10 +539,10 @@ function pageAgent(op, questionSelectors, answer, allowMultiple) {
   }
 
   if (!choices.length) {
-    const fields = deepQuery(FIELD_SELECTOR).filter(usableField);
+    const fields = deepQuery(FIELD_SELECTOR, scope).filter(usableField);
 
     if (!fields.length) {
-      const anyField = deepQuery(FIELD_SELECTOR).length;
+      const anyField = deepQuery(FIELD_SELECTOR, scope).length;
       return {
         count: 0,
         mode: "field",
@@ -719,16 +782,32 @@ async function submitAgent(level, advance) {
   return { clicked: true, advanced: false, reason: "next button never appeared", ...result };
 }
 
-async function scrapeAcrossFrames(tabId, site) {
+async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
   const config = SITES[site] || SITES.smartbook;
 
   const results = await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
     func: pageAgent,
-    args: ["scrape", config.question, null, false],
+    args: ["scrape", config.question, null, false, config.blocks || [], blockIndex ?? null],
   });
 
   const entries = results.filter((entry) => entry && entry.result);
+
+  const exhausted = entries.find((entry) => entry.result.exhausted);
+  if (exhausted && entries.every((entry) => entry.result.exhausted)) {
+    return { exhausted: true, total: exhausted.result.total };
+  }
+
+  const diagram = entries.find((entry) => entry.result.needsImage);
+  if (diagram) {
+    return {
+      frameId: diagram.frameId,
+      needsImage: true,
+      index: diagram.result.index,
+      total: diagram.result.total,
+      questionText: diagram.result.questionText,
+    };
+  }
 
   const questions = entries
     .filter((entry) => !entry.result.resultScreen)
@@ -823,7 +902,25 @@ async function handleAskQuestion(message, sender) {
   }
 
   const tabId = sender.tab.id;
-  const found = await scrapeAcrossFrames(tabId, message.site);
+  const config = SITES[message.site] || SITES.smartbook;
+  const paged = config.mode === "page";
+  const blockIndex = paged ? message.blockIndex || 0 : null;
+
+  const found = await scrapeAcrossFrames(tabId, message.site, blockIndex);
+
+  if (found && found.exhausted) {
+    return { ok: true, done: true, status: `Reached the end of the page (${found.total} questions).` };
+  }
+
+  if (found && found.needsImage) {
+    return {
+      ok: true,
+      skipped: true,
+      index: found.index,
+      total: found.total,
+      status: `Question ${found.index + 1} has a diagram - skipped so it is not guessed at.`,
+    };
+  }
 
   if (!found) {
     throw new Error("No question found on this page");
@@ -851,12 +948,13 @@ async function handleAskQuestion(message, sender) {
   }
 
   const settings = await getSettings();
-  const config = ASSISTANTS[settings.assistant];
+  const assistant = ASSISTANTS[settings.assistant];
 
   await setPending({
     sourceTabId: tabId,
     frameId: found.frameId,
     site: message.site,
+    blockIndex,
     questionType: found.question.questionType,
     questionText: found.question.questionText,
     choices: found.question.choices,
@@ -889,7 +987,7 @@ async function handleAskQuestion(message, sender) {
     throw new Error(ack.error || "Assistant refused the question");
   }
 
-  return { ok: true, assistant: config.label };
+  return { ok: true, assistant: assistant.label };
 }
 
 function parseAnswer(raw) {
@@ -944,6 +1042,8 @@ async function handleAssistantResponse(message) {
         config.question,
         parsed.answer,
         pending.questionType === "multiple-select",
+        config.blocks || [],
+        pending.blockIndex ?? null,
       ],
     });
     const report = results && results[0] ? results[0].result : null;
@@ -984,13 +1084,14 @@ async function handleAssistantResponse(message) {
     return;
   }
 
+  const paged = (SITES[pending.site] || SITES.smartbook).mode === "page";
   let note = "";
-  let advanced = false;
+  let advanced = paged;
   let verdict = null;
   let correctAnswer = null;
   const level = pending.confidence;
 
-  if (level && level !== "off") {
+  if (!paged && level && level !== "off") {
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },

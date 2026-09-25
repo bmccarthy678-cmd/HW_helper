@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "HW Helper",
-  "version": "3.9",
+  "version": "4.0",
   "description": "Transfers a question from MHEducation's Smartbook to AI assistants and then uses their response to auto-select an answer.",
   "permissions": [
     "tabs",
@@ -9,6 +9,7 @@
     "storage"
   ],
   "host_permissions": [
+    "https://*.instructure.com/*",
     "https://*.mheducation.com/*",
     "https://learning.mheducation.com/*",
     "https://ezto.mheducation.com/*",
@@ -47,6 +48,16 @@
       ],
       "run_at": "document_idle",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "https://*.instructure.com/*"
+      ],
+      "js": [
+        "content-scripts/canvas.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle"
     },
     {
       "matches": [

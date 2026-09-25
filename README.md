@@ -7,6 +7,7 @@ Smartbook to an AI assistant and then uses the response to auto-select an answer
 
 | Site | Role |
 | --- | --- |
+| `*.instructure.com` | Canvas quizzes - all questions on one page |
 | `learning.mheducation.com/static/awd/*` | Smartbook — question capture and answer selection |
 | `ezto.mheducation.com/*` | Connect / EZTO — question capture and answer selection |
 | `chatgpt.com` | AI assistant |
@@ -80,6 +81,17 @@ for an array so each value lands in the right field.
 
 Inputs inside a header, nav or footer are ignored, as are search and filter
 boxes, so the page's own controls are never mistaken for answer fields.
+
+## Platforms
+
+Sites come in two shapes. A **single** site shows one question at a time and has
+a next control, so the run answers, submits and advances. A **page** site puts
+every question on one page, so the run walks the question blocks in order,
+answers each in place and never submits - you review and submit yourself.
+
+Anything holding a diagram is skipped rather than guessed at, since only the
+question's text reaches the assistant. The run reports which numbers were
+skipped when it finishes.
 
 ## Matching questions
 
