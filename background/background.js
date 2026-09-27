@@ -74,7 +74,7 @@ const SITES = {
   },
 };
 
-function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors, blockIndex) {
+async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors, blockIndex) {
   const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
 
   const NOISE =
@@ -436,6 +436,95 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     return best;
   };
 
+  const CELL_SELECTOR =
+    "td.responseCell, td[class*='responseCell'], td[class*='response'][id*='_cell_'], [role='gridcell'][tabindex]";
+
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const collectCells = () =>
+    deepQuery(CELL_SELECTOR, scope).filter((node) => {
+      if (!visible(node)) return false;
+      const cls = String(node.className || "");
+      if (/readonly|rowheader/i.test(cls)) return false;
+      return true;
+    });
+
+  const labelForCell = (cell) => {
+    const row = cell.closest && cell.closest("tr");
+    if (!row) return "";
+
+    const siblings = Array.from(row.querySelectorAll("td, th")).filter(
+      (td) => td !== cell && norm(td.textContent)
+    );
+    return siblings.length ? norm(siblings[0].textContent) : "";
+  };
+
+  const formulaBar = () =>
+    deepQuery(
+      "textarea[class*='jSheetControls_formula'], textarea[id*='jSheetControls_formula'], input[class*='formula']"
+    )[0] || null;
+
+  const fillCell = async (cell, value) => {
+    try {
+      cell.scrollIntoView({ block: "center" });
+    } catch (error) {
+      // ignore
+    }
+
+    const options = { bubbles: true, cancelable: true, view: window };
+    ["pointerdown", "mousedown", "mouseup", "click"].forEach((type) => {
+      try {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        cell.dispatchEvent(new Ctor(type, options));
+      } catch (error) {
+        cell.dispatchEvent(new MouseEvent("click", options));
+      }
+    });
+
+    await pause(180);
+
+    const commit = (node) => {
+      const proto =
+        node.tagName === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
+          : window.HTMLInputElement.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && descriptor.set) descriptor.set.call(node, value);
+      else node.value = value;
+
+      const key = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+      try {
+        node.dispatchEvent(new KeyboardEvent("keydown", key));
+        node.dispatchEvent(new KeyboardEvent("keyup", key));
+      } catch (error) {
+        // ignore
+      }
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+      try {
+        node.blur();
+      } catch (error) {
+        // ignore
+      }
+    };
+
+    const bar = formulaBar();
+    if (bar) commit(bar);
+
+    await pause(220);
+    if (norm(cell.textContent).includes(norm(value))) return true;
+
+    // some builds open an editor over the cell instead
+    const active = document.activeElement;
+    if (active && /TEXTAREA|INPUT/.test(active.tagName) && active !== bar) {
+      commit(active);
+      await pause(220);
+      if (norm(cell.textContent).includes(norm(value))) return true;
+    }
+
+    return norm(cell.textContent).includes(norm(value));
+  };
+
   const collectZones = () =>
     deepQuery("div, li, td, section", scope).filter((node) => {
       if (!visible(node)) return false;
@@ -549,7 +638,12 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
       };
     }
 
-    const fields = choices.length ? [] : collectFields();
+    let fields = choices.length ? [] : collectFields();
+    const cells = choices.length || fields.length ? [] : collectCells();
+
+    if (cells.length) {
+      fields = cells.map((cell) => ({ node: cell, kind: "cell", label: labelForCell(cell) }));
+    }
     const anchor = choices.length
       ? choices[0].input
       : fields.length
@@ -699,6 +793,29 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
   }
 
   if (!choices.length) {
+    const cells = collectCells();
+
+    if (cells.length && !deepQuery(FIELD_SELECTOR, scope).filter(usableField).length) {
+      const values = Array.isArray(answer) ? answer : [answer];
+      let done = 0;
+      const missed = [];
+
+      for (let i = 0; i < cells.length; i += 1) {
+        const value = values[i] != null ? String(values[i]) : null;
+        if (value == null) continue;
+
+        if (await fillCell(cells[i], value)) done += 1;
+        else missed.push(cells[i].id || `cell ${i + 1}`);
+      }
+
+      return {
+        count: done,
+        mode: "field",
+        found: cells.length,
+        detail: missed.length ? `sheet cell did not take the value: ${missed.join(", ")}` : "",
+      };
+    }
+
     const fields = deepQuery(FIELD_SELECTOR, scope).filter(usableField);
 
     if (!fields.length) {
@@ -1099,16 +1216,17 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
   if (best) {
     const question = { ...best.result };
 
-    if (!question.questionText) {
-      const elsewhere = questions
-        .filter((entry) => entry !== best)
-        .map((entry) => entry.result.questionText || "")
-        .sort((a, b) => b.length - a.length)[0];
+    const elsewhere = questions
+      .filter((entry) => entry !== best)
+      .map((entry) => entry.result.questionText || "")
+      .sort((a, b) => b.length - a.length)[0];
 
-      if (elsewhere && elsewhere.length > 40) {
-        question.questionText = elsewhere;
-        question.stemFromAnotherFrame = true;
-      }
+    const local = question.questionText || "";
+
+    // borrow when this frame has no wording, or only the labels beside its controls
+    if (elsewhere && elsewhere.length > 40 && elsewhere.length > local.length + 60) {
+      question.questionText = elsewhere;
+      question.stemFromAnotherFrame = true;
     }
 
     return { frameId: best.frameId, question };

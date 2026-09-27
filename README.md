@@ -82,6 +82,18 @@ for an array so each value lands in the right field.
 Inputs inside a header, nav or footer are ignored, as are search and filter
 boxes, so the page's own controls are never mistaken for answer fields.
 
+## Spreadsheet answers
+
+Some Connect questions answer into a sheet widget rather than input boxes. The
+cells are ordinary table elements, and the only real input is a hidden formula
+bar, so a value has to be committed by selecting a cell and driving that bar.
+Those cells are recognised as answer boxes, labelled from the row header beside
+them, and filled that way, with each value verified as having landed.
+
+The wording for such a question often lives in a different frame from the cells.
+The frame holding the controls still receives the answer, and the wording is
+taken from whichever frame actually has it.
+
 ## Check my work
 
 Connect homework shows one question at a time with a Check my work control and
