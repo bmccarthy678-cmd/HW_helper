@@ -13,6 +13,7 @@ let blockIndex = 0;
 let skipped = [];
 let confirmed = 0;
 let cycleResolve = null;
+let lastActivity = 0;
 
 function ensureUi() {
   if (!document.body || document.getElementById(BUTTON_ID)) return;
@@ -95,6 +96,33 @@ function clearWatchdog() {
   watchdog = null;
 }
 
+function armWatchdog() {
+  clearWatchdog();
+  watchdog = setTimeout(() => {
+    watchdog = null;
+    if (Date.now() - lastActivity < REPLY_TIMEOUT_MS - 500) {
+      armWatchdog();
+      return;
+    }
+    if (!inFlight && !running) return;
+    setBusy(false);
+    setStatus("No reply in time. Check the assistant tab, then try again.");
+  }, REPLY_TIMEOUT_MS);
+}
+
+function idleTimeout() {
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (Date.now() - lastActivity >= REPLY_TIMEOUT_MS) {
+        resolve(null);
+        return;
+      }
+      setTimeout(tick, 1000);
+    };
+    setTimeout(tick, 1000);
+  });
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -140,6 +168,7 @@ async function askOnce() {
   if (inFlight) return;
 
   setBusy(true);
+  lastActivity = Date.now();
   setStatus("Reading the question...", 0);
 
   try {
@@ -163,13 +192,8 @@ async function askOnce() {
 
     setStatus(`Sent to ${result.assistant || "the assistant"}. Waiting for a reply...`, 0);
 
-    clearWatchdog();
-    watchdog = setTimeout(() => {
-      watchdog = null;
-      if (!inFlight) return;
-      setBusy(false);
-      setStatus("No reply in time. Check the assistant tab, then try again.");
-    }, REPLY_TIMEOUT_MS);
+    lastActivity = Date.now();
+    armWatchdog();
   } catch (error) {
     setBusy(false);
     setStatus(`Failed: ${error.message}`);
@@ -183,6 +207,7 @@ async function runLoop() {
     setStatus(`Question ${blockIndex + 1}...`, 0);
     scrollToQuestion(blockIndex);
 
+    lastActivity = Date.now();
     const cycle = awaitCycle();
     let result;
 
@@ -234,7 +259,7 @@ async function runLoop() {
       continue;
     }
 
-    const status = await Promise.race([cycle, delay(REPLY_TIMEOUT_MS).then(() => null)]);
+    const status = await Promise.race([cycle, idleTimeout()]);
     if (!running) return;
 
     if (!status || status.outcome !== "selected") {
@@ -290,6 +315,8 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== "status") return;
 
   if (message.outcome === "checking") {
+    lastActivity = Date.now();
+    armWatchdog();
     setStatus(message.text, 0);
     return;
   }
