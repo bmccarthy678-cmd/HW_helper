@@ -82,6 +82,16 @@ for an array so each value lands in the right field.
 Inputs inside a header, nav or footer are ignored, as are search and filter
 boxes, so the page's own controls are never mistaken for answer fields.
 
+## Check my work
+
+Connect homework shows one question at a time with a Check my work control and
+a Next button rather than a confidence rating. With **Use Check my work** on,
+the run answers, checks, reads whether the answer was marked right, returns to
+the question and moves on, recording the verdict either way.
+
+Connect limits how many checks an assignment allows, so this spends a finite
+resource on every question. It is off by default.
+
 ## Platforms
 
 Sites come in two shapes. A **single** site shows one question at a time and has

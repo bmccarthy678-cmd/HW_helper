@@ -161,7 +161,7 @@ async function askOnce() {
       return;
     }
 
-    setStatus(`Sent to ${result.assistant}. Waiting for a reply...`, 0);
+    setStatus(`Sent to ${result.assistant || "the assistant"}. Waiting for a reply...`, 0);
 
     clearWatchdog();
     watchdog = setTimeout(() => {

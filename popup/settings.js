@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS = {
   advance: false,
   images: false,
   verify: false,
+  checkWork: false,
 };
 
 const fields = {
@@ -15,6 +16,7 @@ const fields = {
   confidence: document.getElementById("confidence"),
   advance: document.getElementById("advance"),
   images: document.getElementById("images"),
+  checkWork: document.getElementById("checkWork"),
   verify: document.getElementById("verify"),
 };
 
@@ -44,6 +46,7 @@ async function load() {
   fields.confidence.value = settings.confidence;
   fields.advance.checked = Boolean(settings.advance);
   fields.images.checked = Boolean(settings.images);
+  fields.checkWork.checked = Boolean(settings.checkWork);
   fields.verify.checked = Boolean(settings.verify);
 }
 
@@ -56,6 +59,7 @@ function persist() {
       confidence: fields.confidence.value,
       advance: fields.advance.checked,
       images: fields.images.checked,
+      checkWork: fields.checkWork.checked,
       verify: fields.verify.checked,
     })
     .then(showSaved)

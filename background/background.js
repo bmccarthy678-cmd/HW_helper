@@ -56,6 +56,7 @@ const SITES = {
   },
   ezto: {
     mode: "single",
+    flow: "connect",
     blocks: [],
     question: [
       "[class*='questionText']",
@@ -658,6 +659,118 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
   return { count: clicked, mode: "choice", found: choices.length, detail: "" };
 }
 
+async function connectAgent(doCheck, advance) {
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
+
+  const clickable = () =>
+    Array.from(
+      document.querySelectorAll("button, [role='button'], a, input[type='button'], input[type='submit']")
+    );
+
+  const visible = (node) => {
+    if (!node) return false;
+    const rect = node.getBoundingClientRect();
+    return (rect.width > 0 && rect.height > 0) || node.offsetParent !== null;
+  };
+
+  const enabled = (node) =>
+    !(
+      node.disabled ||
+      node.getAttribute("aria-disabled") === "true" ||
+      node.className.toString().toLowerCase().includes("disabled")
+    );
+
+  const byText = (...wanted) =>
+    clickable().find((node) => {
+      const text = norm(node.textContent || node.value || node.getAttribute("aria-label"));
+      return wanted.includes(text) && visible(node) && enabled(node);
+    }) || null;
+
+  const press = (node) => {
+    const options = { bubbles: true, cancelable: true, view: window };
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((type) => {
+      try {
+        const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+        node.dispatchEvent(new Ctor(type, options));
+      } catch (error) {
+        node.dispatchEvent(new MouseEvent("click", options));
+      }
+    });
+  };
+
+  const waitFor = async (find, ms) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const node = find();
+      if (node) return node;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return null;
+  };
+
+  let verdict = null;
+
+  if (doCheck) {
+    const opener = byText("check my work");
+    if (!opener) return { checked: false, verdict: null, advanced: false, reason: "no Check my work button" };
+
+    press(opener);
+
+    // the confirmation dialog repeats the same label
+    const confirm = await waitFor(() => {
+      const all = clickable().filter((node) => {
+        const text = norm(node.textContent || node.value);
+        return text === "check my work" && visible(node) && node !== opener;
+      });
+      return all.length ? all[all.length - 1] : null;
+    }, 4000);
+
+    if (confirm) press(confirm);
+
+    // the review view announces itself and offers a way back
+    const back = await waitFor(() => byText("return to question"), 9000);
+
+    const checkedInput = document.querySelector(
+      "input[type='radio']:checked, input[type='checkbox']:checked"
+    );
+
+    if (checkedInput) {
+      let row = checkedInput.parentElement;
+      for (let depth = 0; depth < 5 && row; depth += 1, row = row.parentElement) {
+        const blob = norm(
+          `${row.className} ${row.getAttribute("aria-label") || ""} ${row.getAttribute("title") || ""}`
+        );
+        if (/\bincorrect|wrong\b/.test(blob)) {
+          verdict = "incorrect";
+          break;
+        }
+        if (/\bcorrect|right\b/.test(blob)) {
+          verdict = "correct";
+          break;
+        }
+        const marked = row.querySelector("[class*='correct'], [aria-label*='orrect'], [title*='orrect']");
+        if (marked) {
+          verdict = norm(marked.className + " " + (marked.getAttribute("aria-label") || "")).includes("incorrect")
+            ? "incorrect"
+            : "correct";
+          break;
+        }
+      }
+    }
+
+    if (back) press(back);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+  }
+
+  if (!advance) return { checked: doCheck, verdict, advanced: false };
+
+  const next = await waitFor(() => byText("next", "next question", "next >"), 6000);
+  if (!next) return { checked: doCheck, verdict, advanced: false, reason: "no Next button" };
+
+  press(next);
+  return { checked: doCheck, verdict, advanced: true };
+}
+
 async function nextAgent() {
   const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -848,6 +961,7 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
 
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
+  checkWork: false,
   images: false,
   verify: false,
   autoSelect: true,
@@ -1126,6 +1240,8 @@ async function handleAskQuestion(message, sender) {
     autoSelect: settings.autoSelect,
     confidence: settings.confidence,
     advance: settings.advance,
+    checkWork: settings.checkWork,
+    flow: (SITES[message.site] || SITES.smartbook).flow || null,
     startedAt: Date.now(),
   });
 
@@ -1304,14 +1420,38 @@ async function handleAssistantResponse(message) {
     return;
   }
 
-  const paged = (SITES[pending.site] || SITES.smartbook).mode === "page";
+  const siteConfig = SITES[pending.site] || SITES.smartbook;
+  const paged = siteConfig.mode === "page";
+  const connect = siteConfig.flow === "connect";
   let note = "";
   let advanced = paged;
   let verdict = null;
   let correctAnswer = null;
   const level = pending.confidence;
 
-  if (!paged && level && level !== "off") {
+  if (connect) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
+        func: connectAgent,
+        args: [Boolean(pending.checkWork), Boolean(pending.advance)],
+      });
+
+      const outcome = (results && results[0] && results[0].result) || null;
+      verdict = outcome && outcome.verdict ? outcome.verdict : null;
+      advanced = Boolean(outcome && outcome.advanced);
+
+      const bits = [];
+      if (outcome && outcome.checked) {
+        bits.push(verdict ? `checked: ${verdict}` : "checked");
+      }
+      if (advanced) bits.push("moved on");
+      if (outcome && outcome.reason) bits.push(outcome.reason);
+      note = bits.length ? ` ${bits.join(", ")}.` : "";
+    } catch (error) {
+      note = ` Could not check or advance: ${error.message}.`;
+    }
+  } else if (!paged && level && level !== "off") {
     try {
       const results = await chrome.scripting.executeScript({
         target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
