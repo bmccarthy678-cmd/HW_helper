@@ -240,6 +240,36 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     return "";
   };
 
+  const labelForField = (node) => {
+    if (node.id) {
+      try {
+        const explicit = document.querySelector(`label[for="${CSS.escape(node.id)}"]`);
+        const text = explicit ? norm(explicit.textContent) : "";
+        if (text) return text;
+      } catch (error) {
+        // fall through
+      }
+    }
+
+    const aria = norm(node.getAttribute("aria-label") || node.getAttribute("placeholder"));
+    if (aria) return aria;
+
+    const cell = node.closest && node.closest("td, th, li, tr, div");
+    let row = cell;
+
+    for (let depth = 0; depth < 3 && row; depth += 1, row = row.parentElement) {
+      const clone = row.cloneNode(true);
+      clone
+        .querySelectorAll("input, textarea, select, [contenteditable='true']")
+        .forEach((el) => el.remove());
+
+      const text = norm(clone.textContent);
+      if (text && text.length <= 120) return text;
+    }
+
+    return "";
+  };
+
   const collectFields = () => {
     const nodes = deepQuery(FIELD_SELECTOR, scope).filter(usableField);
 
@@ -253,7 +283,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
             .filter(Boolean),
         };
       }
-      return { node, kind: "text" };
+      return { node, kind: "text", label: labelForField(node) };
     });
   };
 
@@ -280,6 +310,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
       const tag = n.tagName;
       if (tag === "BUTTON" || tag === "NAV" || tag === "HEADER" || tag === "FOOTER") return;
       if (tag === "SCRIPT" || tag === "STYLE") return;
+      if (n.id && String(n.id).startsWith("hw-helper")) return;
 
       let isField = false;
       try {
@@ -304,16 +335,25 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     return norm(out);
   };
 
+  const NAV = /check my work|save & exit|\bsubmit\b|\bprev\b|\bnext\b|references|ebook|\bhint\b|\bprint\b|\b\d+\s+of\s+\d+\b/i;
+
   const stemAroundField = (field) => {
     let node = parentOf(field);
+    let best = "";
 
-    for (let depth = 0; depth < 8 && node; depth += 1, node = parentOf(node)) {
-      if (scope && !scope.contains(node)) return "";
+    for (let depth = 0; depth < 9 && node; depth += 1, node = parentOf(node)) {
+      if (scope && !scope.contains(node)) break;
+
       const text = textWithBlanks(node);
-      if (text.length >= 15 && !NOISE.test(text)) return text;
+      if (!text || NOISE.test(text)) continue;
+      if (text.length > 2000) break;
+      if (NAV.test(text)) break;
+
+      if (text.length > best.length) best = text;
+      if (best.length >= 400) break;
     }
 
-    return "";
+    return best;
   };
 
   const collectDraggables = () =>
@@ -370,6 +410,8 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
 
     let best = "";
     for (const el of candidates) {
+      if (el.id && String(el.id).startsWith("hw-helper")) continue;
+      if (el.querySelector && el.querySelector("[id^='hw-helper']")) continue;
       if (el.contains(anchor)) continue;
       const rel = el.compareDocumentPosition(anchor);
       if (!(rel & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
@@ -477,6 +519,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
       })),
       fields: fields.map((field) => ({
         kind: field.kind,
+        label: field.label || "",
         options: field.options || null,
       })),
       blanks: fields.length,

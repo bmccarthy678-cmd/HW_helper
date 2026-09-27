@@ -26,8 +26,8 @@
         return 'Several choices are correct. "answer" must be an array of the exact choice labels, for example ["A", "C"].';
       case "fill-in-the-blank":
         return blanks > 1
-          ? `There are ${blanks} blanks. "answer" must be an array of ${blanks} strings in the order the blanks appear, and nothing else.`
-          : '"answer" must be only the words that belong in the blank, with no sentence around them and no punctuation.';
+          ? `There are ${blanks} boxes. "answer" must be an array of ${blanks} strings in the order the boxes are listed, each just the value with no units, percent sign, currency symbol or thousands separators.`
+          : '"answer" must be only the value that belongs in the blank: no sentence around it, no units, no percent sign, no currency symbol and no thousands separators.';
       case "true-false":
         return '"answer" must be exactly "True" or "False".';
       case "matching-dnd":
@@ -46,13 +46,19 @@
   function formatFields(fields) {
     if (!Array.isArray(fields) || !fields.length) return "";
 
-    const withOptions = fields.filter((field) => field && field.kind === "select");
-    if (!withOptions.length) return "";
+    const informative = fields.some(
+      (field) => field && (field.kind === "select" || normalize(field.label))
+    );
+    if (!informative) return "";
 
     return fields
       .map((field, index) => {
-        if (!field || field.kind !== "select") return `${index + 1}. (free text)`;
-        return `${index + 1}. one of: ${(field.options || []).join(" | ")}`;
+        const label = normalize(field && field.label);
+        const name = label ? `${label}` : "(unlabelled)";
+        if (field && field.kind === "select") {
+          return `${index + 1}. ${name} - one of: ${(field.options || []).join(" | ")}`;
+        }
+        return `${index + 1}. ${name}`;
       })
       .join("\n");
   }
@@ -84,7 +90,10 @@
 
     const fields = formatFields(data.fields);
     if (fields) {
-      parts.push(`Dropdowns:\n${fields}`);
+      const heading = (data.fields || []).some((f) => f && f.kind === "select")
+        ? "Dropdowns"
+        : "Boxes to fill, in order";
+      parts.push(`${heading}:\n${fields}`);
     }
 
     if (Array.isArray(data.terms) && data.terms.length) {
