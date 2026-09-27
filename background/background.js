@@ -206,6 +206,32 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     return field.value === value;
   };
 
+  const srOnly = (el) => {
+    if (!el || el.nodeType !== 1) return false;
+
+    const cls = String(el.className || "");
+    if (/sr-only|visually-hidden|visuallyhidden|screen-?reader|a11y-only/i.test(cls)) return true;
+
+    let style;
+    try {
+      style = window.getComputedStyle(el);
+    } catch (error) {
+      return false;
+    }
+    if (!style) return false;
+
+    if (style.clipPath === "inset(50%)") return true;
+    if (style.clip && style.clip.replace(/\s/g, "") === "rect(0px,0px,0px,0px)") return true;
+
+    if (style.position === "absolute") {
+      const w = parseFloat(style.width);
+      const h = parseFloat(style.height);
+      if ((w && w <= 1) || (h && h <= 1)) return true;
+    }
+
+    return false;
+  };
+
   const visible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
@@ -311,6 +337,8 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
       if (tag === "BUTTON" || tag === "NAV" || tag === "HEADER" || tag === "FOOTER") return;
       if (tag === "SCRIPT" || tag === "STYLE") return;
       if (n.id && String(n.id).startsWith("hw-helper")) return;
+      if (srOnly(n)) return;
+      if (n.getAttribute("aria-hidden") === "true") return;
 
       let isField = false;
       try {
@@ -335,6 +363,8 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     return norm(out);
   };
 
+  const DESCRIPTION = /^(a )?table (has|with) \d+ columns?|column \d+ (lists|has|contains)/i;
+
   const NAV = /check my work|save & exit|\bsubmit\b|\bprev\b|\bnext\b|references|ebook|\bhint\b|\bprint\b|\b\d+\s+of\s+\d+\b/i;
 
   const stemAroundField = (field) => {
@@ -348,6 +378,9 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
       if (!text || NOISE.test(text)) continue;
       if (text.length > 2000) break;
       if (NAV.test(text)) break;
+
+      const meaningful = text.replace(/_{3,}/g, " ").replace(/\s+/g, " ").trim();
+      if (DESCRIPTION.test(meaningful)) continue;
 
       if (text.length > best.length) best = text;
       if (best.length >= 400) break;
@@ -411,6 +444,7 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     let best = "";
     for (const el of candidates) {
       if (el.id && String(el.id).startsWith("hw-helper")) continue;
+      if (srOnly(el)) continue;
       if (el.querySelector && el.querySelector("[id^='hw-helper']")) continue;
       if (el.contains(anchor)) continue;
       const rel = el.compareDocumentPosition(anchor);
@@ -988,12 +1022,23 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
     };
   }
 
+  const answerable = (result) =>
+    (result.choices || []).length +
+    (result.fields || []).length +
+    (result.options || []).length;
+
+  const score = (result) =>
+    answerable(result) * 1000 + Math.min((result.questionText || "").length, 999);
+
   const questions = entries
     .filter((entry) => !entry.result.resultScreen)
-    .sort((a, b) => b.result.choices.length - a.result.choices.length);
+    .sort((a, b) => score(b.result) - score(a.result));
 
-  if (questions.length) {
-    return { frameId: questions[0].frameId, question: questions[0].result };
+  const usable = questions.filter((entry) => answerable(entry.result) > 0);
+  const best = usable.length ? usable[0] : questions[0];
+
+  if (best) {
+    return { frameId: best.frameId, question: best.result };
   }
 
   const resultScreen = entries.find((entry) => entry.result.resultScreen);
@@ -1076,6 +1121,91 @@ async function sendWhenReady(tabId, message, attempts = 24) {
   throw new Error(
     `Assistant tab never became ready: ${lastError ? lastError.message : "unknown error"}`
   );
+}
+
+function diagnoseInPage() {
+  const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim();
+
+  const deep = (selector) => {
+    const out = [];
+    const walk = (root) => {
+      try {
+        out.push(...Array.from(root.querySelectorAll(selector)));
+      } catch (error) {
+        return;
+      }
+      try {
+        Array.from(root.querySelectorAll("*")).forEach((el) => {
+          if (el.shadowRoot) walk(el.shadowRoot);
+        });
+      } catch (error) {
+        // ignore
+      }
+    };
+    walk(document);
+    return out;
+  };
+
+  const seen = (node) => {
+    const rect = node.getBoundingClientRect();
+    return (rect.width > 0 && rect.height > 0) || node.offsetParent !== null;
+  };
+
+  const FIELDS =
+    "input[type='text'], input[type='number'], input[type='tel'], input:not([type]), textarea, select, [contenteditable='true'], [role='textbox']";
+
+  const describe = (node) => {
+    const attrs = {};
+    Array.from(node.attributes || []).forEach((a) => {
+      if (a.value && a.value.length < 80) attrs[a.name] = a.value;
+    });
+    return {
+      tag: node.tagName.toLowerCase(),
+      type: node.type || null,
+      visible: seen(node),
+      disabled: Boolean(node.disabled),
+      readOnly: Boolean(node.readOnly),
+      attrs,
+      ancestors: (() => {
+        const path = [];
+        let n = node.parentElement;
+        for (let i = 0; i < 4 && n; i += 1, n = n.parentElement) {
+          path.push(
+            `${n.tagName.toLowerCase()}${n.id ? "#" + n.id : ""}${
+              n.className && typeof n.className === "string"
+                ? "." + n.className.trim().split(/\s+/).slice(0, 3).join(".")
+                : ""
+            }`
+          );
+        }
+        return path;
+      })(),
+      nearbyText: (() => {
+        let n = node.parentElement;
+        for (let i = 0; i < 3 && n; i += 1, n = n.parentElement) {
+          const clone = n.cloneNode(true);
+          clone.querySelectorAll("input, textarea, select").forEach((el) => el.remove());
+          const t = norm(clone.textContent);
+          if (t) return t.slice(0, 120);
+        }
+        return "";
+      })(),
+    };
+  };
+
+  const fields = deep(FIELDS);
+  const choices = deep("input[type='radio'], input[type='checkbox']");
+
+  return {
+    frameUrl: location.href.slice(0, 160),
+    isTop: window.top === window.self,
+    bodyTextSample: norm(document.body ? document.body.innerText : "").slice(0, 400),
+    choiceCount: choices.length,
+    fieldCount: fields.length,
+    visibleFieldCount: fields.filter(seen).length,
+    fields: fields.slice(0, 8).map(describe),
+    images: deep("img, canvas, svg").filter(seen).length,
+  };
 }
 
 async function grabImages(blockSelectors, blockIndex) {
@@ -1632,6 +1762,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "assistantTimeout") {
     handleAssistantTimeout()
       .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "diagnose") {
+    (async () => {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab) return { ok: false, error: "no active tab" };
+
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: diagnoseInPage,
+      });
+
+      return {
+        ok: true,
+        url: tab.url,
+        version: chrome.runtime.getManifest().version,
+        frames: results.map((entry) => entry.result).filter(Boolean),
+      };
+    })()
+      .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

@@ -180,3 +180,34 @@ clearButton.addEventListener("click", async () => {
 });
 
 refreshNotes();
+
+const diagnoseButton = document.getElementById("diagnose");
+const diagnoseOut = document.getElementById("diagnoseOut");
+
+diagnoseButton.addEventListener("click", async () => {
+  diagnoseButton.disabled = true;
+  diagnoseOut.textContent = "Reading the page...";
+
+  try {
+    const report = await chrome.runtime.sendMessage({ type: "diagnose" });
+
+    if (!report || !report.ok) {
+      diagnoseOut.textContent = `Failed: ${report ? report.error : "no response"}`;
+      return;
+    }
+
+    const text = JSON.stringify(report, null, 2);
+    await navigator.clipboard.writeText(text);
+
+    const withFields = report.frames.filter((f) => f.visibleFieldCount > 0 || f.choiceCount > 0);
+    diagnoseOut.textContent =
+      `Copied. ${report.frames.length} frame(s); ` +
+      `${withFields.length} with answers; ` +
+      `${withFields.reduce((n, f) => n + f.visibleFieldCount, 0)} boxes, ` +
+      `${withFields.reduce((n, f) => n + f.choiceCount, 0)} choices.`;
+  } catch (error) {
+    diagnoseOut.textContent = `Failed: ${error.message}`;
+  } finally {
+    diagnoseButton.disabled = false;
+  }
+});
