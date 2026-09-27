@@ -394,6 +394,46 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
       (node) => visible(node) && norm(node.textContent).length > 2
     );
 
+  const broadStem = (anchor) => {
+    const root = scope || document;
+    let candidates = [];
+    try {
+      candidates = Array.from(root.querySelectorAll("p, div, li, td, section, article, span"));
+    } catch (error) {
+      return "";
+    }
+
+    let best = "";
+
+    for (const el of candidates) {
+      if (!el || srOnly(el)) continue;
+      if (el.id && String(el.id).startsWith("hw-helper")) continue;
+      if (el.getAttribute && el.getAttribute("aria-hidden") === "true") continue;
+      if (!visible(el)) continue;
+
+      let hasControls = false;
+      try {
+        hasControls = Boolean(el.querySelector("input, textarea, select, button, nav, iframe"));
+      } catch (error) {
+        hasControls = true;
+      }
+      if (hasControls) continue;
+
+      if (anchor) {
+        const rel = el.compareDocumentPosition(anchor);
+        if (!(rel & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+      }
+
+      const text = norm(el.textContent);
+      if (text.length < 40 || text.length > 1600) continue;
+      if (NOISE.test(text) || NAV.test(text) || DESCRIPTION.test(text)) continue;
+
+      if (text.length > best.length) best = text;
+    }
+
+    return best;
+  };
+
   const collectZones = () =>
     deepQuery("div, li, td, section", scope).filter((node) => {
       if (!visible(node)) return false;
@@ -518,9 +558,13 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
     let stem = findStem(anchor);
 
     if (!stem && fields.length) stem = stemAroundField(fields[0].node);
+    if (!stem) stem = broadStem(anchor);
     if (fields.length && !choices.length) {
       const around = stemAroundField(fields[0].node);
       if (around.length > stem.length) stem = around;
+
+      const broad = broadStem(fields[0].node);
+      if (broad.length > stem.length) stem = broad;
     }
 
     if (!stem && !choices.length && !fields.length) return null;
