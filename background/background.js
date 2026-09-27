@@ -146,6 +146,8 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
   const usableField = (node) => {
     if (!visible(node)) return false;
     if (node.disabled || node.readOnly) return false;
+    if (node.getAttribute("aria-hidden") === "true") return false;
+    if (node.getAttribute("tabindex") === "-1") return false;
     if (node.closest && node.closest("header, nav, footer")) return false;
 
     const hint = norm(
@@ -567,7 +569,20 @@ function pageAgent(op, questionSelectors, answer, allowMultiple, blockSelectors,
       if (broad.length > stem.length) stem = broad;
     }
 
-    if (!stem && !choices.length && !fields.length) return null;
+    if (!stem && !choices.length && !fields.length && !draggables.length) {
+      const loose = broadStem(null);
+      if (loose && loose.length > 60) {
+        return {
+          questionText: loose,
+          choices: [],
+          fields: [],
+          blanks: 0,
+          questionType: "fill-in-the-blank",
+          textOnly: true,
+        };
+      }
+      return null;
+    }
 
     const isMulti = choices.some((c) => c.input.type === "checkbox");
     const hasSelect = fields.some((f) => f.kind === "select");
@@ -1082,7 +1097,21 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
   const best = usable.length ? usable[0] : questions[0];
 
   if (best) {
-    return { frameId: best.frameId, question: best.result };
+    const question = { ...best.result };
+
+    if (!question.questionText) {
+      const elsewhere = questions
+        .filter((entry) => entry !== best)
+        .map((entry) => entry.result.questionText || "")
+        .sort((a, b) => b.length - a.length)[0];
+
+      if (elsewhere && elsewhere.length > 40) {
+        question.questionText = elsewhere;
+        question.stemFromAnotherFrame = true;
+      }
+    }
+
+    return { frameId: best.frameId, question };
   }
 
   const resultScreen = entries.find((entry) => entry.result.resultScreen);
@@ -1240,6 +1269,27 @@ function diagnoseInPage() {
   const fields = deep(FIELDS);
   const choices = deep("input[type='radio'], input[type='checkbox']");
 
+  // grid widgets render answer cells as ordinary elements, not inputs
+  const gridCells = deep(
+    "td, [class*='cell'], [id*='cell'], [class*='jSheet'], [id*='jSheet'], [role='gridcell']"
+  )
+    .filter((node) => {
+      if (!seen(node)) return false;
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 30 && rect.height >= 12;
+    })
+    .slice(0, 24)
+    .map((node) => ({
+      tag: node.tagName.toLowerCase(),
+      id: node.id || null,
+      cls: (typeof node.className === "string" ? node.className : "").slice(0, 80) || null,
+      text: norm(node.textContent).slice(0, 40),
+      editable: node.isContentEditable || node.getAttribute("contenteditable") === "true",
+      tabindex: node.getAttribute("tabindex"),
+      role: node.getAttribute("role"),
+      clickable: Boolean(node.onclick) || node.getAttribute("tabindex") !== null,
+    }));
+
   return {
     frameUrl: location.href.slice(0, 160),
     isTop: window.top === window.self,
@@ -1249,6 +1299,12 @@ function diagnoseInPage() {
     visibleFieldCount: fields.filter(seen).length,
     fields: fields.slice(0, 8).map(describe),
     images: deep("img, canvas, svg").filter(seen).length,
+    gridCells,
+    gridHints: {
+      jSheet: deep("[class*='jSheet'], [id*='jSheet']").length,
+      tables: deep("table").length,
+      contentEditable: deep("[contenteditable='true']").length,
+    },
   };
 }
 
