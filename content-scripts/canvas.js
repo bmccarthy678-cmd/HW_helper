@@ -4,6 +4,7 @@ const REPLY_TIMEOUT_MS = 195000;
 const MAX_QUESTIONS = 100;
 const FAILURE_LIMIT = 2;
 const CYCLE_GAP_MS = 1400;
+const HANDSHAKE_MS = 45000;
 
 let inFlight = false;
 let watchdog = null;
@@ -102,13 +103,20 @@ function armWatchdog() {
   clearWatchdog();
   watchdog = setTimeout(() => {
     watchdog = null;
+
     if (Date.now() - lastActivity < REPLY_TIMEOUT_MS - 500) {
       armWatchdog();
       return;
     }
+
     if (!inFlight && !running) return;
-    setBusy(false);
-    setStatus("No reply in time. Check the assistant tab, then try again.");
+
+    running = false;
+    inFlight = false;
+    cycleResolve = null;
+    chrome.runtime.sendMessage({ type: "cancel" }).catch(() => {});
+    paintButton();
+    setStatus("No reply in time. Press HW Helper to try again.");
   }, REPLY_TIMEOUT_MS);
 }
 
@@ -192,16 +200,25 @@ async function askOnce() {
 
   setBusy(true);
   lastActivity = Date.now();
+  armWatchdog();
   setStatus("Reading the question...", 0);
 
   try {
-    const result = await chrome.runtime.sendMessage({
-      type: "askQuestion",
-      site: "canvas",
-      blockIndex,
-    });
+    const result = await Promise.race([
+      chrome.runtime.sendMessage({
+        type: "askQuestion",
+        site: "canvas",
+        blockIndex,
+      }),
+      delay(HANDSHAKE_MS).then(() => null),
+    ]);
 
-    if (!result || !result.ok) {
+    if (!result) {
+      cancelEverything("The extension did not respond. Press HW Helper to try again.");
+      return;
+    }
+
+    if (!result.ok) {
       setBusy(false);
       setStatus(`Failed: ${result ? result.error : "no response"}`);
       return;
@@ -231,6 +248,7 @@ async function runLoop() {
     scrollToQuestion(blockIndex);
 
     lastActivity = Date.now();
+    armWatchdog();
     const cycle = awaitCycle();
     let result;
 
