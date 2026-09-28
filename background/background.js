@@ -710,6 +710,7 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
         options: field.options || null,
       })),
       blanks: fields.length,
+      source: null,
       questionType: choices.length
         ? isMulti
           ? "multiple-select"
@@ -1640,7 +1641,7 @@ async function handleAskQuestion(message, sender) {
   try {
     ack = await sendWhenReady(tab.id, {
       type: "receiveQuestion",
-      question: found.question,
+      question: { ...found.question, source: message.site },
       image,
     });
   } catch (error) {
@@ -1718,7 +1719,7 @@ async function handleAssistantResponse(message) {
       try {
         await sendWhenReady(pending.assistantTabId, {
           type: "receiveQuestion",
-          question: pending.question,
+          question: { ...pending.question, source: pending.site },
           image: pending.image,
         });
         return;

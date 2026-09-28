@@ -20,6 +20,17 @@
       .join("\n");
   }
 
+  function openingFor(source) {
+    switch (source) {
+      case "canvas":
+        return "Answer this question from an online course quiz.";
+      case "ezto":
+        return "Answer this question from an online course assignment. Show no working, just the final value.";
+      default:
+        return "Answer this question from an online course assignment.";
+    }
+  }
+
   function instructionsFor(questionType, blanks) {
     switch (questionType) {
       case "multiple-select":
@@ -67,9 +78,7 @@
     const data = questionData || {};
     const parts = [];
 
-    parts.push(
-      "Answer this question from a McGraw Hill Smartbook assignment."
-    );
+    parts.push(openingFor(data.source));
     parts.push(instructionsFor(data.questionType, data.blanks || 0));
     parts.push(
       'Reply with one JSON object and nothing else: no preamble, no code fence, no text after it. ' +
