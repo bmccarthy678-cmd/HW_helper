@@ -1698,6 +1698,36 @@ async function handleAssistantResponse(message) {
 
   const answerText = JSON.stringify(parsed.answer);
 
+  const expected = (pending.question && pending.question.blanks) || 0;
+  const supplied = Array.isArray(parsed.answer) ? parsed.answer.length : 1;
+
+  if (expected > 1 && supplied < expected && !pending.reshaped) {
+    await setPending({ ...pending, reshaped: true, round: pending.round });
+
+    await notifySource(pending.sourceTabId, {
+      type: "status",
+      outcome: "checking",
+      text: `Got ${supplied} value${supplied === 1 ? "" : "s"} for ${expected} boxes - asking again.`,
+    });
+
+    try {
+      await sendWhenReady(pending.assistantTabId, {
+        type: "receiveQuestion",
+        question: {
+          ...pending.question,
+          source: pending.site,
+          retryHint: `Your last reply gave ${supplied} value${
+            supplied === 1 ? "" : "s"
+          }, but this question has ${expected} boxes. Reply with a JSON array of exactly ${expected} values, one per box, in the order listed.`,
+        },
+        image: pending.image,
+      });
+      return;
+    } catch (error) {
+      // fall through and apply what we have
+    }
+  }
+
   if (pending.verify && pending.round < 3) {
     const priorAnswers = [...(pending.priorAnswers || []), parsed.answer];
     const agreed = priorAnswers.length >= 2 &&
@@ -1824,12 +1854,17 @@ async function handleAssistantResponse(message) {
   if (connect) {
     try {
       const results = await chrome.scripting.executeScript({
-        target: { tabId: pending.sourceTabId, frameIds: [pending.frameId] },
+        target: { tabId: pending.sourceTabId, allFrames: true },
         func: connectAgent,
         args: [Boolean(pending.checkWork), Boolean(pending.advance)],
       });
 
-      const outcome = (results && results[0] && results[0].result) || null;
+      const all = results.map((entry) => entry && entry.result).filter(Boolean);
+      const outcome =
+        all.find((r) => r.checked || r.advanced) ||
+        all.find((r) => !r.reason) ||
+        all[0] ||
+        null;
       verdict = outcome && outcome.verdict ? outcome.verdict : null;
       advanced = Boolean(outcome && outcome.advanced);
 

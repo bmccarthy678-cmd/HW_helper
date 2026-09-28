@@ -41,12 +41,15 @@ bar.addEventListener("keydown",e=>{
 const GPT=`<!DOCTYPE html><html><body><div id="thread"></div>
 <div id="prompt-textarea" contenteditable="true"></div>
 <button data-testid="send-button">Send</button><script>
-window.__prompt="";
+window.__prompt=""; window.__sends=0;
 document.querySelector("[data-testid='send-button']").addEventListener("click",()=>{
- window.__prompt=document.getElementById("prompt-textarea").innerText;
+ window.__prompt=document.getElementById("prompt-textarea").innerText; window.__sends++;
+ const short = window.__sends===1;
+ const body = short ? '{"answer": "6.13", "explanation":"APR is 6.13"}'
+                    : '{"answer": ["6.13","6.30"], "explanation":"both values"}';
  setTimeout(()=>{const d=document.createElement("div");
  d.setAttribute("data-message-author-role","assistant");
- d.textContent='{"answer": ["6.13","6.30"], "explanation":"solve the annuity then annualise"}';
+ d.textContent=body;
  document.getElementById("thread").appendChild(d);
  document.getElementById("prompt-textarea").innerText="";},300);});
 </script></body></html>`;
@@ -84,6 +87,8 @@ const f = p.frameLocator("iframe");
 check("first sheet cell filled",
   await until(()=>f.locator("[id='0_table0_cell_c1_r0']").textContent().then(t=>(t||"").trim()==="6.13")),
   await f.locator("[id='0_table0_cell_c1_r0']").textContent().catch(()=>"?"));
+check("under-answer triggered a corrective re-ask",
+  (await gpt.evaluate(()=>window.__sends))>=2, `sends=${await gpt.evaluate(()=>window.__sends)}`);
 check("second sheet cell filled",
   await until(()=>f.locator("[id='0_table0_cell_c1_r1']").textContent().then(t=>(t||"").trim()==="6.30")),
   await f.locator("[id='0_table0_cell_c1_r1']").textContent().catch(()=>"?"));

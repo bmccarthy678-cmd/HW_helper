@@ -119,6 +119,10 @@
       );
     }
 
+    if (data.retryHint) {
+      parts.push(normalize(data.retryHint));
+    }
+
     parts.push('{"answer": ..., "explanation": "..."}');
 
     return parts.join("\n\n");
