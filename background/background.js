@@ -2037,10 +2037,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         func: diagnoseInPage,
       });
 
+      const settings = await getSettings();
+      const assistantConfig = ASSISTANTS[settings.assistant];
+      const assistantTabs = await chrome.tabs.query({ url: assistantConfig.match });
+      const { pendingRequest } = await chrome.storage.session.get("pendingRequest");
+
       return {
         ok: true,
         url: tab.url,
         version: chrome.runtime.getManifest().version,
+        settings,
+        assistant: {
+          chosen: settings.assistant,
+          label: assistantConfig.label,
+          tabsOpen: assistantTabs.length,
+          tabUrls: assistantTabs.slice(0, 2).map((t) => (t.url || "").slice(0, 60)),
+        },
+        pending: pendingRequest
+          ? {
+              site: pendingRequest.site,
+              round: pendingRequest.round,
+              ageSeconds: Math.round((Date.now() - pendingRequest.startedAt) / 1000),
+            }
+          : null,
         frames: results.map((entry) => entry.result).filter(Boolean),
       };
     })()
