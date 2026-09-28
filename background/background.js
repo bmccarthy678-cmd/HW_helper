@@ -1985,6 +1985,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "cancel") {
+    takePending()
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (message.type === "diagnose") {
     (async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });

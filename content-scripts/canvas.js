@@ -78,11 +78,13 @@ function paintButton() {
   const button = document.getElementById(BUTTON_ID);
   if (!button) return;
 
-  button.textContent = running ? "Stop" : "HW Helper";
-  button.style.background = running ? "#b3261e" : "#1f5799";
-  button.disabled = inFlight && !running;
-  button.style.opacity = button.disabled ? "0.6" : "1";
-  button.style.cursor = button.disabled ? "default" : "pointer";
+  const busy = running || inFlight;
+
+  button.textContent = busy ? "Stop" : "HW Helper";
+  button.style.background = busy ? "#b3261e" : "#1f5799";
+  button.disabled = false;
+  button.style.opacity = "1";
+  button.style.cursor = "pointer";
 }
 
 function setBusy(busy) {
@@ -133,6 +135,20 @@ function awaitCycle() {
   });
 }
 
+function cancelEverything(text) {
+  running = false;
+  inFlight = false;
+  cycleResolve = null;
+  clearWatchdog();
+
+  chrome.runtime
+    .sendMessage({ type: "cancel" })
+    .catch(() => {});
+
+  paintButton();
+  if (text) setStatus(text, 8000);
+}
+
 function stopRun(text) {
   running = false;
   inFlight = false;
@@ -143,8 +159,15 @@ function stopRun(text) {
 }
 
 async function onClick() {
+  if (inFlight && !running) {
+    cancelEverything("Stopped. Press again to retry.");
+    return;
+  }
+
   if (running) {
-    stopRun(`Stopped after ${answered} question${answered === 1 ? "" : "s"}.`);
+    cancelEverything(
+      `Stopped after ${answered} question${answered === 1 ? "" : "s"}. Press again to restart.`
+    );
     return;
   }
 
@@ -313,6 +336,8 @@ function scrollToQuestion(index) {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== "status") return;
+
+  if (!running && !inFlight) return;
 
   if (message.outcome === "checking") {
     lastActivity = Date.now();
