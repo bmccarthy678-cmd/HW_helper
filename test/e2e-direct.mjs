@@ -95,6 +95,13 @@ if (appeared) {
     const others = await sb.evaluate(() => [1,2].map(i => document.getElementById("c"+i).checked));
     check("no other choice selected", others.every((c) => !c), JSON.stringify(others));
 
+    // the worker checks the radio first and posts the status message after, so
+    // wait for the chip rather than reading it the instant the radio flips
+    await sb.waitForFunction(() => {
+      const n = document.getElementById("hw-helper-status");
+      return n && /Selected/.test(n.textContent);
+    }, null, { timeout: 15000 }).catch(() => {});
+
     const chip = await sb.evaluate(() => {
       const n = document.getElementById("hw-helper-status");
       return n ? n.textContent : "";

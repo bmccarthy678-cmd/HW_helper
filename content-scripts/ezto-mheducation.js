@@ -163,7 +163,57 @@ function stopRun(text) {
   if (text) setStatus(text, 15000);
 }
 
+// After the extension is reinstalled or updated, the content script already
+// running in an open tab is orphaned: chrome.runtime.id goes undefined and
+// chrome.storage disappears entirely, so the failure arrives as a TypeError
+// rather than the documented "Extension context invalidated" message. Ask the
+// runtime directly instead of matching on the text.
+function contextAlive() {
+  try {
+    return Boolean(chrome && chrome.runtime && chrome.runtime.id && chrome.storage);
+  } catch (error) {
+    return false;
+  }
+}
+
+function staleContext(error) {
+  if (!contextAlive()) return true;
+  const message = String((error && error.message) || error || "");
+  return /Extension context invalidated|message port closed|receiving end does not exist/i.test(
+    message
+  );
+}
+
+function reportStale() {
+  inFlight = false;
+  running = false;
+  cycleResolve = null;
+  clearWatchdog();
+  paintButton();
+  setStatus("The extension was updated. Reload this page, then try again.", 0);
+}
+
 async function onClick() {
+  if (!contextAlive()) {
+    reportStale();
+    return;
+  }
+
+  try {
+    await handleClick();
+  } catch (error) {
+    if (staleContext(error)) {
+      reportStale();
+      return;
+    }
+    setBusy(false);
+    running = false;
+    paintButton();
+    setStatus(`Failed: ${error.message}`);
+  }
+}
+
+async function handleClick() {
   if (inFlight && !running) {
     cancelEverything("Stopped. Press again to retry.");
     return;
@@ -180,10 +230,14 @@ async function onClick() {
     confidence: "off",
     advance: false,
     autoSelect: true,
+    checkWork: false,
   });
 
+  // this site advances with Check my work, not a confidence rating
   const canRun =
-    settings.autoSelect && settings.confidence !== "off" && settings.advance;
+    settings.autoSelect &&
+    settings.advance &&
+    (settings.checkWork || settings.confidence !== "off");
 
   if (!canRun) {
     await askOnce();
