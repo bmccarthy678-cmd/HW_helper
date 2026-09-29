@@ -1,3 +1,6 @@
+// lets the worker tell this tab apart from one that never got the adapter
+window.__hwHelperAdapter = true;
+
 let hasResponded = false;
 let messageCountAtQuestion = 0;
 let observationTimeout = null;

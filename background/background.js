@@ -4,18 +4,21 @@ const ASSISTANTS = {
     url: "https://chatgpt.com/",
     match: "https://chatgpt.com/*",
     responseType: "chatgptResponse",
+    files: ["content-scripts/shared/prompt-builder.js", "content-scripts/chatgpt.js"],
   },
   gemini: {
     label: "Gemini",
     url: "https://gemini.google.com/app",
     match: "https://gemini.google.com/*",
     responseType: "geminiResponse",
+    files: ["content-scripts/shared/prompt-builder.js", "content-scripts/gemini.js"],
   },
   deepseek: {
     label: "DeepSeek",
     url: "https://chat.deepseek.com/",
     match: "https://chat.deepseek.com/*",
     responseType: "deepseekResponse",
+    files: ["content-scripts/shared/prompt-builder.js", "content-scripts/deepseek.js"],
   },
 };
 
@@ -1298,14 +1301,64 @@ async function ensureAssistantTab(assistantKey, focus) {
   return chrome.tabs.create({ url: config.url, active: Boolean(focus) });
 }
 
+// Chrome injects a content script when a matching tab navigates, not when the
+// extension is installed. An assistant tab left open across an install or an
+// update therefore never receives the adapter, and every question sent to it is
+// dropped until that tab is reloaded. Put the adapter there ourselves.
+async function injectAssistant(tabId) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (error) {
+    return false;
+  }
+
+  const key = Object.keys(ASSISTANTS).find((name) => {
+    const origin = new URL(ASSISTANTS[name].url).origin;
+    return tab.url && tab.url.startsWith(origin);
+  });
+
+  if (!key || !ASSISTANTS[key].files) return false;
+
+  // a tab that already has the adapter is merely still starting up; injecting a
+  // second copy would answer the same question twice
+  try {
+    const probe = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => Boolean(window.__hwHelperAdapter),
+    });
+    if (probe && probe[0] && probe[0].result) return false;
+  } catch (error) {
+    return false;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ASSISTANTS[key].files,
+    });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function sendWhenReady(tabId, message, attempts = 24) {
   let lastError = null;
+  let injected = false;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await chrome.tabs.sendMessage(tabId, message);
     } catch (error) {
       lastError = error;
+
+      // a couple of failures in is long enough to tell "still loading" from
+      // "no adapter in this tab at all"
+      if (!injected && attempt >= 2) {
+        injected = await injectAssistant(tabId);
+      }
+
       await delay(750);
     }
   }
