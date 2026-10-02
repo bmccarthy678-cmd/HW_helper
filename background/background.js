@@ -1178,11 +1178,32 @@ async function submitAgent(level, advance) {
 async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
   const config = SITES[site] || SITES.smartbook;
 
-  const results = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    func: pageAgent,
-    args: ["scrape", config.question, null, false, config.blocks || [], blockIndex ?? null],
-  });
+  const args = [
+    "scrape",
+    config.question,
+    null,
+    false,
+    config.blocks || [],
+    blockIndex ?? null,
+  ];
+
+  // One frame the extension is not allowed to touch rejects the whole all-frames
+  // call, which loses the question even when the main document is holding it.
+  // Fall back to the top frame rather than failing the question outright.
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: pageAgent,
+      args,
+    });
+  } catch (error) {
+    results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: pageAgent,
+      args,
+    });
+  }
 
   const entries = results.filter((entry) => entry && entry.result);
 
