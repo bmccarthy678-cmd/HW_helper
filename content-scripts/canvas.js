@@ -302,14 +302,30 @@ async function runLoop() {
     const cycle = awaitCycle();
     let result;
 
+    // askOnce has always raced the worker against a deadline; the run loop did
+    // not, so a worker that never answered left the button red on "Working on
+    // question 1" until the three-minute watchdog. The run loop is now the
+    // default path, so give it the same deadline.
     try {
-      result = await chrome.runtime.sendMessage({
-        type: "askQuestion",
-        site: "canvas",
-        blockIndex,
-      });
+      result = await Promise.race([
+        chrome.runtime.sendMessage({
+          type: "askQuestion",
+          site: "canvas",
+          blockIndex,
+        }),
+        delay(HANDSHAKE_MS).then(() => ({ hung: true })),
+      ]);
     } catch (error) {
+      if (staleContext(error)) {
+        reportStale();
+        return;
+      }
       stopRun(`Stopped: ${error.message}`);
+      return;
+    }
+
+    if (result && result.hung) {
+      cancelEverything("The extension did not respond. Press HW Helper to try again.");
       return;
     }
 

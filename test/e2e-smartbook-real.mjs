@@ -54,6 +54,15 @@ await sw.evaluate(()=>chrome.storage.sync.set({autoSelect:true,advance:false,con
 const gpt=await ctx.newPage(); await gpt.goto("https://chatgpt.com/");
 const p=await ctx.newPage(); await p.goto("https://learning.mheducation.com/static/awd/index.html");
 await p.locator("#hw-helper-trigger").waitFor({state:"visible",timeout:10000});
+
+// record every status the chip shows, since the interim ones are replaced quickly
+await p.evaluate(()=>{
+  window.__chips=[];
+  const watch=()=>{const n=document.getElementById("hw-helper-status");
+    if(n){const t=n.textContent; if(t && window.__chips[window.__chips.length-1]!==t) window.__chips.push(t);}};
+  new MutationObserver(watch).observe(document.body,{subtree:true,childList:true,characterData:true});
+});
+
 await p.locator("#hw-helper-trigger").click({force:true});
 
 const until=async(f,ms=60000)=>{const e=Date.now()+ms;while(Date.now()<e){if(await f().catch(()=>false))return true;await new Promise(r=>setTimeout(r,400));}return false;};
@@ -74,6 +83,10 @@ if (sent) {
     await until(()=>p.evaluate(()=>document.getElementById("c0").checked)),
     await p.evaluate(()=>{const n=document.getElementById("hw-helper-status");return n?n.textContent:"";}));
 }
+
+const chips = await p.evaluate(()=>window.__chips||[]);
+check("chip reports finding the question before opening the assistant",
+  chips.some(t=>/Found the question\. Opening ChatGPT/.test(t)), JSON.stringify(chips));
 
 await ctx.close();
 console.log(`\n${failures===0?"ALL CHECKS PASSED":failures+" CHECK(S) FAILED"}`);

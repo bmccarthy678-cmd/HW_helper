@@ -1,22 +1,22 @@
+// Only the two genuine choices are settings. Everything else has one sensible
+// answer, so it is fixed here rather than asked about.
+const AUTOMATIC = {
+  autoSelect: true,
+  advance: true,
+  confidence: "high",
+  checkWork: true,
+  images: true,
+  focusAssistantTab: false,
+};
+
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
-  autoSelect: true,
-  focusAssistantTab: false,
-  confidence: "off",
-  advance: false,
-  images: false,
   verify: false,
-  checkWork: false,
+  ...AUTOMATIC,
 };
 
 const fields = {
   assistant: document.getElementById("assistant"),
-  autoSelect: document.getElementById("autoSelect"),
-  focusAssistantTab: document.getElementById("focusAssistantTab"),
-  confidence: document.getElementById("confidence"),
-  advance: document.getElementById("advance"),
-  images: document.getElementById("images"),
-  checkWork: document.getElementById("checkWork"),
   verify: document.getElementById("verify"),
 };
 
@@ -41,26 +41,22 @@ async function load() {
   const settings = Object.assign({}, DEFAULT_SETTINGS, stored);
 
   fields.assistant.value = settings.assistant;
-  fields.autoSelect.checked = Boolean(settings.autoSelect);
-  fields.focusAssistantTab.checked = Boolean(settings.focusAssistantTab);
-  fields.confidence.value = settings.confidence;
-  fields.advance.checked = Boolean(settings.advance);
-  fields.images.checked = Boolean(settings.images);
-  fields.checkWork.checked = Boolean(settings.checkWork);
   fields.verify.checked = Boolean(settings.verify);
+
+  // An older install may have these stored as whatever its checkboxes were left
+  // at. The boxes are gone, so write the automatic values back over them.
+  const stale = Object.keys(AUTOMATIC).filter(
+    (key) => stored[key] !== AUTOMATIC[key]
+  );
+  if (stale.length) chrome.storage.sync.set(AUTOMATIC).catch(() => {});
 }
 
 function persist() {
   chrome.storage.sync
     .set({
       assistant: fields.assistant.value,
-      autoSelect: fields.autoSelect.checked,
-      focusAssistantTab: fields.focusAssistantTab.checked,
-      confidence: fields.confidence.value,
-      advance: fields.advance.checked,
-      images: fields.images.checked,
-      checkWork: fields.checkWork.checked,
       verify: fields.verify.checked,
+      ...AUTOMATIC,
     })
     .then(showSaved)
     .catch((error) => console.error("Could not save settings:", error));

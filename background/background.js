@@ -825,14 +825,33 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
   }
 
   if (op === "scrape") {
-    const resultScreen = Array.from(
-      document.querySelectorAll("button, [role='button'], input[type='button']")
+    const hasNext = Array.from(
+      document.querySelectorAll("button, [role='button'], input[type='button'], .next-button")
     ).some((node) => {
-      const text = norm(node.textContent || node.value || node.getAttribute("aria-label"));
+      const text = norm(
+        node.textContent || node.value || node.getAttribute("aria-label")
+      ).toLowerCase();
       return (text === "next question" || text === "next") && visible(node);
     });
 
-    if (resultScreen) return { resultScreen: true };
+    // A Next button on its own does not mean the question is over. SmartBook
+    // keeps one on screen beside a live question, and treating that as the
+    // answered screen made the extension report "moved to the next question"
+    // and never contact the assistant at all. Where the page states its own
+    // mode, believe it; otherwise only call it answered when there is nothing
+    // here to answer.
+    const probeMode = deepQuery("[class*='awd-probe-mode-']", scope)[0] || null;
+    const answerable = probeMode
+      ? Boolean(deepQuery(".awd-probe-mode-testing", scope)[0])
+      : Boolean(
+          choices.length ||
+            selectTextChoices().length ||
+            matchRoot() ||
+            collectFields().length ||
+            collectCells().length
+        );
+
+    if (hasNext && !answerable) return { resultScreen: true };
 
     const picks = selectTextChoices();
     if (picks.length >= 2) {
@@ -1611,13 +1630,13 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
 
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
-  checkWork: false,
-  images: false,
+  checkWork: true,
+  images: true,
   verify: false,
   autoSelect: true,
   focusAssistantTab: false,
-  confidence: "off",
-  advance: false,
+  confidence: "high",
+  advance: true,
 };
 
 const RELEASES_ENDPOINT =
@@ -2026,6 +2045,15 @@ async function handleAskQuestion(message, sender) {
       };
     }
   }
+
+  // Say how far it got. "Reading the question" followed by this means the page
+  // read worked and any stall is on the assistant side; a chip stuck on
+  // "Reading the question" means it never got this far.
+  await notifySource(tabId, {
+    type: "status",
+    outcome: "checking",
+    text: `Found the question. Opening ${assistant.label}...`,
+  });
 
   const tab = await ensureAssistantTab(
     settings.assistant,

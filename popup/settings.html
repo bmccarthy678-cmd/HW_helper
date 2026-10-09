@@ -29,53 +29,17 @@
       </section>
 
       <section class="field field--row">
-        <input type="checkbox" id="autoSelect" />
-        <label for="autoSelect">Select the answer automatically</label>
-      </section>
-
-      <section class="field field--row">
-        <input type="checkbox" id="focusAssistantTab" />
-        <label for="focusAssistantTab">Switch to the assistant tab</label>
-      </section>
-
-      <section class="field">
-        <label class="field__label" for="confidence">Submit confidence</label>
-        <select class="field__control" id="confidence">
-          <option value="off">Do not submit</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-        <p class="field__hint">
-          After a choice is selected, click that confidence button to submit.
-          Leave off to review the answer yourself first.
-        </p>
-      </section>
-
-      <section class="field field--row">
-        <input type="checkbox" id="checkWork" />
-        <label for="checkWork">Use Check my work, then move on</label>
-      </section>
-
-      <section class="field field--row">
-        <input type="checkbox" id="images" />
-        <label for="images">Send diagrams as screenshots</label>
-      </section>
-
-      <section class="field field--row">
         <input type="checkbox" id="verify" />
-        <label for="verify">Ask each question twice and compare</label>
+        <label for="verify">Double-check every answer</label>
       </section>
 
       <p class="field__hint">
-        Questions with a diagram are always asked twice, since reading a picture
-        is the least reliable part.
+        Asks twice and compares, which is slower. Questions with a diagram are
+        always double-checked either way, since reading a picture is the least
+        reliable part. Everything else runs on its own: answers are filled in,
+        work is checked where the site offers it, and it moves to the next
+        question until the assignment is done.
       </p>
-
-      <section class="field field--row">
-        <input type="checkbox" id="advance" />
-        <label for="advance">Then press Next Question</label>
-      </section>
 
       <section class="notes">
         <p class="notes__summary" id="notesSummary">No questions recorded yet.</p>

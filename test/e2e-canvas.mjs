@@ -63,7 +63,9 @@ const ctx=await chromium.launchPersistentContext(userDataDir,{channel:"chromium"
 await ctx.route("https://ohio.instructure.com/**",r=>r.fulfill({status:200,contentType:"text/html",body:QUIZ}));
 await ctx.route("https://chatgpt.com/**",r=>r.fulfill({status:200,contentType:"text/html",body:CHATGPT}));
 let sw=ctx.serviceWorkers()[0]||await ctx.waitForEvent("serviceworker",{timeout:15000}).catch(()=>null);
-await sw.evaluate(()=>chrome.storage.sync.set({autoSelect:true}));
+// this checks the skip-and-report path for diagrams, which only exists with
+// sending diagrams turned off; the default now sends them
+await sw.evaluate(()=>chrome.storage.sync.set({autoSelect:true,images:false}));
 
 const gpt=await ctx.newPage(); await gpt.goto("https://chatgpt.com/");
 const q=await ctx.newPage(); await q.goto("https://ohio.instructure.com/courses/1/quizzes/1/take");

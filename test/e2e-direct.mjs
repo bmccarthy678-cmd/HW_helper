@@ -56,6 +56,10 @@ check("service worker registered", Boolean(sw), sw ? sw.url().split("/").pop() :
 const swErrors = [];
 if (sw) sw.on("console", (m) => { if (m.type() === "error") swErrors.push(m.text()); });
 
+// this checks one round trip, not the unattended run, so say so rather than
+// inherit the defaults (which now submit and move on by themselves)
+if (sw) await sw.evaluate(() => chrome.storage.sync.set({ advance: false, confidence: "off" }));
+
 // assistant tab must exist for tabs.query to find it
 const gpt = await ctx.newPage();
 const gptErrors = [];
