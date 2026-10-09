@@ -565,6 +565,173 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
       .filter((choice) => choice.text && !NOISE.test(choice.text));
   };
 
+  // Two SmartBook widgets answer to neither a label click nor a generic drag.
+  // Select-text choices are clickable spans with no input behind them, and the
+  // matching board is react-beautiful-dnd, which ignores synthesised mouse
+  // drags entirely and is driven from the keyboard: focus the handle, space to
+  // lift, arrows to travel, space to drop.
+  const SELECT_TEXT = ".select-text-component .choice.-interactive";
+  const MATCH_ROOT = ".matching-component";
+  const MATCH_ROW = ".responses-container .match-row";
+  const POOL_CHOICE =
+    '.choices-container .choice-item-wrapper:not(.-placeholder)[id^="choices:"]';
+  const ROW_CHOICE =
+    '.match-single-response-wrapper .choice-item-wrapper:not(.-placeholder)[id^="choices:"], .match-single-response-wrapper .choice-item-wrapper:not(.-placeholder)[id^="response:"]';
+  const DRAG_HANDLE = "[data-react-beautiful-dnd-drag-handle]";
+
+  const KEY = {
+    space: { key: " ", code: "Space", keyCode: 32 },
+    up: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+    down: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+  };
+
+  const pressKey = (target, def) => {
+    ["keydown", "keyup"].forEach((type) => {
+      const event = new KeyboardEvent(type, {
+        key: def.key,
+        code: def.code,
+        bubbles: true,
+        cancelable: true,
+      });
+      try {
+        Object.defineProperty(event, "keyCode", { get: () => def.keyCode });
+        Object.defineProperty(event, "which", { get: () => def.keyCode });
+      } catch (error) {
+        // the event still carries key and code
+      }
+      target.dispatchEvent(event);
+    });
+  };
+
+  const selectTextChoices = () => deepQuery(SELECT_TEXT, scope).filter(visible);
+
+  const matchRoot = () => deepQuery(MATCH_ROOT, scope)[0] || null;
+
+  const matchRows = (root) => Array.from(root.querySelectorAll(MATCH_ROW));
+
+  const matchPrompt = (row) => {
+    const node = row.querySelector(".match-prompt .content") || row.querySelector(".match-prompt");
+    return node ? norm(node.textContent) : "";
+  };
+
+  const itemText = (item) => {
+    if (!item) return "";
+    const node = item.querySelector(".content") || item.querySelector("p");
+    return norm((node || item).textContent);
+  };
+
+  const handleFor = (item) =>
+    (item.matches && item.matches(DRAG_HANDLE) ? item : item.querySelector(DRAG_HANDLE)) || item;
+
+  const looseEqual = (a, b) => {
+    const x = norm(a).toLowerCase();
+    const y = norm(b).toLowerCase();
+    if (!x || !y) return false;
+    return x === y || (x.length > 3 && y.includes(x)) || (y.length > 3 && x.includes(y));
+  };
+
+  // Where a given choice currently sits: in one of the rows, or still in the pool.
+  const locateChoice = (root, wantedText) => {
+    const rowsList = matchRows(root);
+
+    for (let index = 0; index < rowsList.length; index += 1) {
+      const item = rowsList[index].querySelector(ROW_CHOICE);
+      if (item && looseEqual(itemText(item), wantedText)) {
+        return { area: "row", rowIndex: index, poolIndex: -1, item };
+      }
+    }
+
+    const pool = Array.from(root.querySelectorAll(POOL_CHOICE));
+    for (let index = 0; index < pool.length; index += 1) {
+      if (looseEqual(itemText(pool[index]), wantedText)) {
+        return { area: "pool", rowIndex: -1, poolIndex: index, item: pool[index] };
+      }
+    }
+
+    return null;
+  };
+
+  const matchPairs = (raw) => {
+    const out = [];
+    const add = (prompt, choice) => {
+      const p = norm(prompt);
+      const c = norm(choice);
+      if (p && c) out.push({ prompt: p, choice: c });
+    };
+
+    const walk = (value) => {
+      if (value == null) return;
+
+      if (Array.isArray(value)) {
+        value.forEach(walk);
+        return;
+      }
+
+      if (typeof value === "object") {
+        const prompt = value.prompt ?? value.left ?? value.term ?? value.key ?? value.from;
+        const choice = value.choice ?? value.match ?? value.right ?? value.definition ?? value.value ?? value.to;
+        if (prompt != null && choice != null) {
+          add(prompt, choice);
+          return;
+        }
+        Object.keys(value).forEach((key) => add(key, value[key]));
+        return;
+      }
+
+      String(value)
+        .split(/\n|;/)
+        .forEach((segment) => {
+          const pair = segment.match(/^(.*?)\s*(?:->|=>|:)\s*(.+)$/);
+          if (pair) add(pair[1], pair[2]);
+        });
+    };
+
+    walk(raw);
+    return out;
+  };
+
+  // The board does not re-render mid-drag, so the arrow presses are counted up
+  // front and fired blind, exactly as a keyboard user's would be.
+  const moveChoice = async (root, wantedText, targetRow) => {
+    const origin = locateChoice(root, wantedText);
+    if (!origin) return false;
+    if (origin.rowIndex === targetRow) return true;
+
+    const rowCount = matchRows(root).length;
+    const handle = handleFor(origin.item);
+
+    try {
+      handle.focus({ preventScroll: true });
+    } catch (error) {
+      handle.focus();
+    }
+    await pause(40);
+
+    pressKey(handle, KEY.space);
+    await pause(80);
+
+    let direction = KEY.up;
+    let steps;
+    if (origin.area === "row") {
+      const delta = targetRow - origin.rowIndex;
+      steps = Math.abs(delta);
+      if (delta > 0) direction = KEY.down;
+    } else {
+      steps = origin.poolIndex + (rowCount - targetRow);
+    }
+
+    for (let step = 0; step < steps; step += 1) {
+      pressKey(handle, direction);
+      await pause(70);
+    }
+
+    pressKey(handle, KEY.space);
+    await pause(120);
+
+    const settled = locateChoice(root, wantedText);
+    return Boolean(settled && settled.rowIndex === targetRow);
+  };
+
   // A prompt carries screen-reader spans and the chrome around its blanks inside
   // the same element as the wording. Reading textContent drags all of that into
   // the question; strip it, and mark each blank so the assistant knows how many
@@ -667,6 +834,52 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
 
     if (resultScreen) return { resultScreen: true };
 
+    const picks = selectTextChoices();
+    if (picks.length >= 2) {
+      return {
+        questionText: findStem(picks[0]) || broadStem(picks[0]),
+        diagram: null,
+        index: 0,
+        total: 1,
+        choices: picks.map((node, index) => ({
+          label: String.fromCharCode(65 + index),
+          text: norm(node.textContent),
+        })),
+        fields: [],
+        blanks: 0,
+        source: null,
+        questionType: "multiple-select",
+      };
+    }
+
+    const board = matchRoot();
+    if (board) {
+      const terms = matchRows(board).map(matchPrompt).filter(Boolean);
+      const options = Array.from(
+        new Set(
+          Array.from(board.querySelectorAll(`${POOL_CHOICE}, ${ROW_CHOICE}`))
+            .map(itemText)
+            .filter(Boolean)
+        )
+      );
+
+      if (terms.length && options.length) {
+        return {
+          questionText: findStem(board) || broadStem(board),
+          diagram: null,
+          index: 0,
+          total: 1,
+          choices: [],
+          fields: [],
+          blanks: 0,
+          terms,
+          options,
+          source: null,
+          questionType: "matching-dnd",
+        };
+      }
+    }
+
     const draggables = choices.length ? [] : collectDraggables();
 
     if (!choices.length && draggables.length >= 2) {
@@ -765,6 +978,76 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
         : hasSelect
           ? "matching"
           : "fill-in-the-blank",
+    };
+  }
+
+  const picks = selectTextChoices();
+  if (picks.length >= 2) {
+    const wanted = (Array.isArray(answer) ? answer : [answer])
+      .map((value) => norm(value).toLowerCase())
+      .filter(Boolean);
+
+    let clicked = 0;
+    picks.forEach((node, index) => {
+      const label = String.fromCharCode(65 + index).toLowerCase();
+      const text = norm(node.textContent).toLowerCase();
+
+      const hit = wanted.some(
+        (value) =>
+          value === label ||
+          value === text ||
+          value === `${label}. ${text}` ||
+          (value.length > 3 && text.includes(value)) ||
+          (text.length > 3 && value.includes(text))
+      );
+
+      if (hit) {
+        node.click();
+        clicked += 1;
+      }
+    });
+
+    return {
+      count: clicked,
+      mode: "choice",
+      found: picks.length,
+      detail: clicked ? "" : "none of the answers matched the selectable text",
+    };
+  }
+
+  const board = matchRoot();
+  if (board) {
+    const rowsList = matchRows(board);
+    const prompts = rowsList.map(matchPrompt);
+    const pairs = matchPairs(answer);
+
+    if (!pairs.length) {
+      return { count: 0, mode: "match", found: rowsList.length, detail: "could not read any pairs from the answer" };
+    }
+
+    let placed = 0;
+    for (const pair of pairs) {
+      const targetRow = prompts.findIndex((prompt) => looseEqual(prompt, pair.prompt));
+      if (targetRow < 0) continue;
+      if (await moveChoice(board, pair.choice, targetRow)) placed += 1;
+    }
+
+    // one more sweep: a move can be knocked out of place by a later one
+    if (placed < pairs.length) {
+      for (const pair of pairs) {
+        const targetRow = prompts.findIndex((prompt) => looseEqual(prompt, pair.prompt));
+        if (targetRow < 0) continue;
+        const where = locateChoice(board, pair.choice);
+        if (where && where.rowIndex === targetRow) continue;
+        if (await moveChoice(board, pair.choice, targetRow)) placed += 1;
+      }
+    }
+
+    return {
+      count: placed,
+      mode: "match",
+      found: rowsList.length,
+      detail: placed ? "" : "the cards would not move into their rows",
     };
   }
 
