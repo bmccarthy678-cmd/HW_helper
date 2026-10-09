@@ -40,20 +40,23 @@ const SITES = {
   smartbook: {
     mode: "single",
     blocks: [],
+    // SmartBook ships a stable, semantic DOM. These are its real class names;
+    // the looser patterns below them are kept only as a safety net.
     question: [
+      ".probe-container .prompt",
+      "[class*='awd-probe-type-'] .prompt",
+      ".prompt",
       "[data-automation-id='question-stem']",
       "[class*='questionStem']",
       ".probe-question",
       ".question-stem",
-      "[class*='prompt-text']",
-      "[class*='stem']",
     ],
     choice: [
+      ".choiceText",
+      ".choice.-interactive",
       "[data-automation-id='choice']",
-      "[class*='choiceRow']",
-      "[class*='choice-row']",
-      "[class*='answerChoice']",
       ".choice",
+      "[class*='choiceRow']",
       "label[for^='choice']",
     ],
   },
@@ -556,13 +559,38 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
       .filter((choice) => choice.text && !NOISE.test(choice.text));
   };
 
+  // A prompt carries screen-reader spans and the chrome around its blanks inside
+  // the same element as the wording. Reading textContent drags all of that into
+  // the question; strip it, and mark each blank so the assistant knows how many
+  // values to supply.
+  const cleanStem = (node) => {
+    let clone;
+    try {
+      clone = node.cloneNode(true);
+    } catch (error) {
+      return norm(node.textContent);
+    }
+
+    clone
+      .querySelectorAll(
+        "span.fitb-span, span.blank-label, span.correctness, span._visuallyHidden, .sr-only, [aria-hidden='true']"
+      )
+      .forEach((el) => el.remove());
+
+    clone.querySelectorAll("input, textarea, select").forEach((el) => {
+      el.replaceWith(document.createTextNode(" [BLANK] "));
+    });
+
+    return norm(clone.textContent);
+  };
+
   const findStem = (anchor) => {
     const root = scope || document;
 
     for (const selector of questionSelectors || []) {
       try {
         const node = root.querySelector(selector);
-        const text = node ? norm(node.textContent) : "";
+        const text = node ? cleanStem(node) : "";
         if (text) return text;
       } catch (error) {
         continue;
@@ -1031,12 +1059,16 @@ async function connectAgent(doCheck, advance) {
 async function nextAgent() {
   const norm = (v) => String(v == null ? "" : v).replace(/\s+/g, " ").trim().toLowerCase();
 
-  const node = Array.from(
-    document.querySelectorAll("button, [role='button'], input[type='button']")
-  ).find((el) => {
-    const text = norm(el.textContent || el.value || el.getAttribute("aria-label"));
-    return text === "next question" || text === "next";
-  });
+  // SmartBook marks its own Next control with a class; everywhere else, fall
+  // back to matching the visible wording.
+  const node =
+    document.querySelector(".next-button") ||
+    Array.from(
+      document.querySelectorAll("button, [role='button'], input[type='button']")
+    ).find((el) => {
+      const text = norm(el.textContent || el.value || el.getAttribute("aria-label"));
+      return text === "next question" || text === "next";
+    });
 
   if (!node) return false;
 
@@ -1064,11 +1096,26 @@ async function submitAgent(level, advance) {
       )
     );
 
+  // SmartBook's confidence buttons are addressable directly. Their labels are
+  // what the loose text match was aiming at, so try the real hook first.
+  const byAutomationId = () => {
+    const level = wanted.replace(/\s+/g, "_");
+    try {
+      return document.querySelector(
+        `[data-automation-id="confidence-buttons--${level}"], [data-automation-id="confidence-buttons--${level}_confidence"]`
+      );
+    } catch (error) {
+      return null;
+    }
+  };
+
   const findButton = () =>
+    byAutomationId() ||
     candidates().find((node) => {
       const text = norm(node.textContent || node.value || node.getAttribute("aria-label"));
       return text === wanted;
-    }) || null;
+    }) ||
+    null;
 
   const isEnabled = (node) =>
     !(
