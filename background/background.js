@@ -46,10 +46,12 @@ const SITES = {
       ".probe-container .prompt",
       "[class*='awd-probe-type-'] .prompt",
       ".prompt",
+      ".match-prompt .content",
       "[data-automation-id='question-stem']",
       "[class*='questionStem']",
       ".probe-question",
       ".question-stem",
+      "[class*='stem']",
     ],
     choice: [
       ".choiceText",
@@ -64,13 +66,17 @@ const SITES = {
     mode: "single",
     flow: "connect",
     blocks: [],
+    // Connect's own class names come first; the looser patterns are a net.
     question: [
+      ".question",
       "[class*='questionText']",
       "[class*='question-text']",
       ".question-body",
       "[class*='stem']",
     ],
     choice: [
+      ".answers--mc .answer__label--mc",
+      ".answer__label--mc",
       "[class*='answerChoice']",
       "[class*='answer-choice']",
       "tr[class*='choice']",
@@ -571,14 +577,24 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
       return norm(node.textContent);
     }
 
+    // An aria-hidden run of underscores is how some pages draw a blank: keep it
+    // as one rather than deleting it and losing the count.
+    clone.querySelectorAll("[aria-hidden='true']").forEach((el) => {
+      if (/_{2,}/.test(el.textContent || "")) {
+        el.replaceWith(document.createTextNode(" _______ "));
+      } else {
+        el.remove();
+      }
+    });
+
     clone
       .querySelectorAll(
-        "span.fitb-span, span.blank-label, span.correctness, span._visuallyHidden, .sr-only, [aria-hidden='true']"
+        "span.fitb-span, span.blank-label, span.correctness, span._visuallyHidden, .sr-only"
       )
       .forEach((el) => el.remove());
 
     clone.querySelectorAll("input, textarea, select").forEach((el) => {
-      el.replaceWith(document.createTextNode(" [BLANK] "));
+      el.replaceWith(document.createTextNode(" _______ "));
     });
 
     return norm(clone.textContent);
