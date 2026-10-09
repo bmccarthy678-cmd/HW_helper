@@ -48,7 +48,7 @@ await btn.click({force:true});
 check("button returns to HW Helper after cancelling",
   await until(()=>btn.textContent().then(t=>t==="HW Helper"), 8000), await btn.textContent());
 check("status says it stopped",
-  /stopped/i.test(await p.locator("#hw-helper-status-ezto").textContent().catch(()=>"")),
+  await until(()=>p.locator("#hw-helper-status-ezto").textContent().then(t=>/stopped/i.test(t||"")), 10000),
   await p.locator("#hw-helper-status-ezto").textContent().catch(()=>""));
 check("pending request cleared in the worker",
   await sw.evaluate(async()=>!(await chrome.storage.session.get("pendingRequest")).pendingRequest));

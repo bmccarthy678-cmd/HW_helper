@@ -83,6 +83,7 @@ check("read a verdict", ev.some(e=>e.startsWith("verdict-")), ev.filter(e=>e.sta
 check("clicked Return to question", ev.includes("returned"));
 check("then moved to the next question", await until(()=>p.evaluate(()=>window.__events.includes("next"))),
   JSON.stringify(await p.evaluate(()=>window.__events)));
+await until(()=>p.locator("#hw-helper-status-ezto").textContent().then(t=>/checked/.test(t||"")), 20000);
 const chip = await p.locator("#hw-helper-status-ezto").textContent().catch(()=>"");
 check("status reports the check", /checked/.test(chip), chip);
 await ctx.close();

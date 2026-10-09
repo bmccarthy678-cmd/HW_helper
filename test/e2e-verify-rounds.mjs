@@ -49,6 +49,9 @@ check("disagreement triggered a third round",
   await until(()=>gpt.evaluate(()=>window.__round>=3)), `rounds=${await gpt.evaluate(()=>window.__round)}`);
 check("majority answer typed into the box",
   await until(()=>p.locator("#apr").inputValue().then(v=>v==="6.25")), await p.locator("#apr").inputValue());
+// the value is typed first and the status posted after, so wait for the chip
+// rather than reading it in the same instant the box fills
+await until(()=>p.locator("#hw-helper-status-ezto").textContent().then(t=>/confirmed twice/i.test(t||"")), 20000);
 const chip=await p.locator("#hw-helper-status-ezto").textContent().catch(()=>"");
 check("status reports it was confirmed", /confirmed twice/i.test(chip), chip);
 await ctx.close();
