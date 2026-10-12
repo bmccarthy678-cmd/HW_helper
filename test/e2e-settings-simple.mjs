@@ -40,10 +40,20 @@ check("the run settings are repaired automatically",
 const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "hwhset2-"));
 const ctx2=await chromium.launchPersistentContext(dir2,{channel:"chromium",headless:true,
  args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`]});
-let sw2=null; for(let i=0;i<40&&!sw2;i++){sw2=ctx2.serviceWorkers()[0]||null; if(!sw2) await new Promise(r=>setTimeout(r,500));}
-const fresh = await sw2.evaluate(()=>chrome.storage.sync.get({
-  autoSelect:true, advance:true, confidence:"high", checkWork:true, images:true,
-}));
+// The worker can be handed over a moment before its extension APIs are bound,
+// so wait until it can actually reach its settings before asking it anything.
+let fresh = null;
+for (let i = 0; i < 40 && !fresh; i += 1) {
+  const worker = ctx2.serviceWorkers()[0];
+  if (worker) {
+    // ask the extension itself: nothing stored, so this is purely its defaults
+    fresh = await worker
+      .evaluate(() => (chrome.storage && chrome.storage.sync ? getSettings() : null))
+      .catch(() => null);
+  }
+  if (!fresh) await new Promise((r) => setTimeout(r, 500));
+}
+fresh = fresh || {};
 check("a fresh install needs no setup to run",
   fresh.autoSelect===true && fresh.advance===true && fresh.confidence==="high" &&
   fresh.checkWork===true && fresh.images===true,
