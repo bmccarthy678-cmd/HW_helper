@@ -284,6 +284,13 @@ async function askOnce() {
       return;
     }
 
+    if (result.skipped) {
+      clearWatchdog();
+      setBusy(false);
+      setStatus(result.status, 15000);
+      return;
+    }
+
     setStatus(`Sent to ${result.assistant || "the assistant"}. Waiting for a reply...`, 0);
 
     lastActivity = Date.now();
@@ -349,6 +356,15 @@ async function runLoop() {
 
       await delay(CYCLE_GAP_MS);
       continue;
+    }
+
+    // This page shows one question at a time, so a skipped question is still
+    // the one on screen and there is nothing to move on to. The loop used to
+    // wait for an answer that was never coming, red button and all. Stop and
+    // say why instead.
+    if (result.skipped) {
+      stopRun(`${result.status} Answer it yourself, then press HW Helper to carry on.`);
+      return;
     }
 
     if (result.done) {

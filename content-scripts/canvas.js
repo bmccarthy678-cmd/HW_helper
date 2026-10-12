@@ -280,6 +280,13 @@ async function askOnce() {
       return;
     }
 
+    if (result.skipped) {
+      clearWatchdog();
+      setBusy(false);
+      setStatus(result.status, 15000);
+      return;
+    }
+
     setStatus(`Sent to ${result.assistant || "the assistant"}. Waiting for a reply...`, 0);
 
     lastActivity = Date.now();

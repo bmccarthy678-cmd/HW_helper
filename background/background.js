@@ -141,10 +141,33 @@ async function pageAgent(op, questionSelectors, answer, allowMultiple, blockSele
     return op === "scrape" ? { exhausted: true, total: blocks.length } : { count: 0, mode: "none" };
   }
 
+  // A diagram belongs to the question, so look for one only there. Scanning the
+  // whole document on single-question pages counted the publisher's logo, cover
+  // art and avatars, which marked every question as a diagram question.
+  const PAGE_CHROME = "header, nav, footer, aside, [role='banner'], [role='navigation'], [role='contentinfo']";
+
+  const questionRegion = () => {
+    if (scope) return scope;
+
+    const probe = deepQuery(".probe-container", null)[0];
+    if (probe) return probe;
+
+    // otherwise climb from the stem to the first container that also holds the
+    // answer controls
+    const stem = deepQuery(".question, .prompt", null)[0];
+    for (let node = stem; node && node !== document.body; node = parentOf(node)) {
+      if (node.querySelector && node.querySelector("input, select, textarea, [role='radio'], [role='checkbox']")) {
+        return node;
+      }
+    }
+    return document;
+  };
+
   const hasDiagram = () => {
-    const root = scope || document;
+    const root = questionRegion();
     return Array.from(root.querySelectorAll("img, canvas, svg")).some((node) => {
       if (!visible(node)) return false;
+      if (node.closest && node.closest(PAGE_CHROME)) return false;
       const rect = node.getBoundingClientRect();
       const w = node.naturalWidth || rect.width;
       const h = node.naturalHeight || rect.height;
@@ -1644,6 +1667,9 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
 // how long to wait for every frame to answer before falling back to the top one
 const SCRAPE_DEADLINE_MS = 8000;
 
+// how long to spend capturing a question's picture before answering without it
+const IMAGE_DEADLINE_MS = 12000;
+
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
   checkWork: true,
@@ -1916,8 +1942,22 @@ async function grabImages(blockSelectors, blockIndex) {
     return null;
   };
 
-  const root = findBlock() || document.body;
+  const PAGE_CHROME = "header, nav, footer, aside, [role='banner'], [role='navigation'], [role='contentinfo']";
+
+  // the same region the scrape looked in, so the picture sent is the question's
+  const questionRegion = () => {
+    const probe = document.querySelector(".probe-container");
+    if (probe) return probe;
+    const stem = document.querySelector(".question, .prompt");
+    for (let node = stem; node && node !== document.body; node = node.parentElement) {
+      if (node.querySelector("input, select, textarea, [role='radio'], [role='checkbox']")) return node;
+    }
+    return document.body;
+  };
+
+  const root = findBlock() || questionRegion();
   const big = (node) => {
+    if (node.closest(PAGE_CHROME)) return false;
     const rect = node.getBoundingClientRect();
     const w = node.naturalWidth || rect.width;
     const h = node.naturalHeight || rect.height;
@@ -2063,27 +2103,40 @@ async function handleAskQuestion(message, sender) {
         ok: true,
         skipped: true,
         index: found.question.index,
-        status: `Question ${found.question.index + 1} has a diagram - skipped. Turn on Send diagrams to answer it.`,
+        status: `Question ${found.question.index + 1} has a diagram, and sending diagrams was switched off by an older version. Opening the HW Helper settings once switches it back on.`,
       };
     }
 
+    // A picture that cannot be fetched or drawn (another domain, a slow CDN)
+    // used to mark the question skipped. On single-question pages nothing moved
+    // past a skipped question, so the run just sat there. Give the capture a
+    // deadline, and if it fails answer from the wording alone rather than not
+    // at all.
     try {
-      const grabbed = await chrome.scripting.executeScript({
-        target: { tabId, frameIds: [found.frameId] },
-        func: grabImages,
-        args: [config.blocks || [], blockIndex ?? null],
-      });
+      const grabbed = await Promise.race([
+        chrome.scripting.executeScript({
+          target: { tabId, frameIds: [found.frameId] },
+          func: grabImages,
+          args: [config.blocks || [], blockIndex ?? null],
+          injectImmediately: true,
+        }),
+        delay(IMAGE_DEADLINE_MS).then(() => {
+          throw new Error("timed out");
+        }),
+      ]);
 
       const images = (grabbed && grabbed[0] && grabbed[0].result) || [];
-      if (!images.length) throw new Error("the diagram could not be read from the page");
-      image = images[0];
+      if (images.length) image = images[0];
     } catch (error) {
-      return {
-        ok: true,
-        skipped: true,
-        index: found.question.index,
-        status: `Question ${found.question.index + 1} has a diagram that could not be captured (${error.message}) - skipped.`,
-      };
+      image = null;
+    }
+
+    if (!image) {
+      await notifySource(tabId, {
+        type: "status",
+        outcome: "checking",
+        text: "Couldn't capture the picture, so answering from the question text.",
+      });
     }
   }
 
