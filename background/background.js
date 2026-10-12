@@ -1552,22 +1552,35 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
     blockIndex ?? null,
   ];
 
-  // One frame the extension is not allowed to touch rejects the whole all-frames
-  // call, which loses the question even when the main document is holding it.
-  // Fall back to the top frame rather than failing the question outright.
+  // An all-frames call resolves only once every frame has answered, and by
+  // default each frame is not even injected until its document finishes
+  // loading. Live courseware carries frames the question has nothing to do
+  // with, and one that never finishes (a tracker blocked on a script that never
+  // arrives) held the whole read open forever: the chip sat on its first
+  // message and nothing was ever sent. Inject without waiting for frames to
+  // load, and give up on stragglers after a few seconds.
+  //
+  // One frame the extension is not allowed to touch also rejects the whole
+  // call. Either way, fall back to the top frame, which is where SmartBook
+  // keeps its question, rather than failing outright.
+  const read = (target) =>
+    Promise.race([
+      chrome.scripting.executeScript({
+        target,
+        func: pageAgent,
+        args,
+        injectImmediately: true,
+      }),
+      delay(SCRAPE_DEADLINE_MS).then(() => {
+        throw new Error("Reading the page timed out");
+      }),
+    ]);
+
   let results;
   try {
-    results = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      func: pageAgent,
-      args,
-    });
+    results = await read({ tabId, allFrames: true });
   } catch (error) {
-    results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: pageAgent,
-      args,
-    });
+    results = await read({ tabId });
   }
 
   const entries = results.filter((entry) => entry && entry.result);
@@ -1627,6 +1640,9 @@ async function scrapeAcrossFrames(tabId, site, blockIndex = null) {
 
   return null;
 }
+
+// how long to wait for every frame to answer before falling back to the top one
+const SCRAPE_DEADLINE_MS = 8000;
 
 const DEFAULT_SETTINGS = {
   assistant: "chatgpt",
@@ -2506,6 +2522,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const results = await chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: true },
         func: diagnoseInPage,
+        injectImmediately: true,
       });
 
       const settings = await getSettings();
