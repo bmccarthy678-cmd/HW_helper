@@ -1671,6 +1671,24 @@ function assistantForResponseType(type) {
   );
 }
 
+// Chrome throttles background tabs, and an assistant's page can sit hidden
+// without rendering or processing a prompt at all. Show whichever tab is about
+// to do the work, then hand the screen back when the answer arrives. Tabs in
+// different windows are left alone: each is already visible in its own.
+async function bringToFront(tabId, otherTabId) {
+  try {
+    const [tab, other] = await Promise.all([
+      chrome.tabs.get(tabId),
+      chrome.tabs.get(otherTabId),
+    ]);
+    if (tab.windowId !== other.windowId) return;
+    await chrome.tabs.update(tabId, { active: true });
+    await delay(300);
+  } catch (error) {
+    // a tab closed mid-question is not worth failing the question over
+  }
+}
+
 async function ensureAssistantTab(assistantKey, focus) {
   const config = ASSISTANTS[assistantKey];
   const existing = await chrome.tabs.query({ url: config.match });
@@ -1684,7 +1702,7 @@ async function ensureAssistantTab(assistantKey, focus) {
     return tab;
   }
 
-  return chrome.tabs.create({ url: config.url, active: Boolean(focus) });
+  return chrome.tabs.create({ url: config.url, active: true });
 }
 
 // Chrome injects a content script when a matching tab navigates, not when the
@@ -2059,6 +2077,7 @@ async function handleAskQuestion(message, sender) {
     settings.assistant,
     settings.focusAssistantTab
   );
+  await bringToFront(tab.id, tabId);
 
   await setPending({
     sourceTabId: tabId,
@@ -2136,6 +2155,7 @@ async function handleAssistantResponse(message) {
   try {
     parsed = parseAnswer(message.response);
   } catch (error) {
+    await bringToFront(pending.sourceTabId, pending.assistantTabId);
     await notifySource(pending.sourceTabId, {
       type: "status",
       outcome: "failed",
@@ -2225,6 +2245,9 @@ async function handleAssistantResponse(message) {
       return;
     }
   }
+
+  // the answer goes back into the courseware, so put it back in front first
+  await bringToFront(pending.sourceTabId, pending.assistantTabId);
 
   if (!pending.autoSelect) {
     await notifySource(pending.sourceTabId, {
