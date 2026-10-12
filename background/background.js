@@ -2005,7 +2005,14 @@ async function grabImages(blockSelectors, blockIndex) {
   return out;
 }
 
+async function wasCancelledSince(startedAt) {
+  const { cancelledAt } = await chrome.storage.session.get("cancelledAt");
+  return Boolean(cancelledAt && cancelledAt >= startedAt);
+}
+
 async function handleAskQuestion(message, sender) {
+  const startedAt = Date.now();
+
   if (!sender.tab || sender.tab.id == null) {
     throw new Error("Question did not come from a tab");
   }
@@ -2095,6 +2102,10 @@ async function handleAskQuestion(message, sender) {
   );
   await bringToFront(tab.id, tabId);
 
+  if (await wasCancelledSince(startedAt)) {
+    return { ok: true, done: true, status: "Stopped." };
+  }
+
   await setPending({
     sourceTabId: tabId,
     frameId: found.frameId,
@@ -2117,7 +2128,7 @@ async function handleAskQuestion(message, sender) {
     advance: settings.advance,
     checkWork: settings.checkWork,
     flow: (SITES[message.site] || SITES.smartbook).flow || null,
-    startedAt: Date.now(),
+    startedAt,
   });
 
   let ack;
@@ -2166,6 +2177,7 @@ function sameAnswer(a, b) {
 async function handleAssistantResponse(message) {
   const pending = await takePending();
   if (!pending) return;
+  if (await wasCancelledSince(pending.startedAt || 0)) return;
 
   let parsed;
   try {
@@ -2508,7 +2520,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "cancel") {
-    takePending()
+    // A cancel can land while a question is still being read and has not been
+    // recorded as pending yet, so clearing the pending request alone missed it
+    // and the late answer was filled in anyway. Record when the cancel happened
+    // as well: any request that started before it is void.
+    chrome.storage.session
+      .set({ cancelledAt: Date.now() })
+      .then(() => takePending())
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;

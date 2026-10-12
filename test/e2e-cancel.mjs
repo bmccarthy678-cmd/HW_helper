@@ -43,26 +43,44 @@ check("button shows Stop while working",
   await until(()=>btn.textContent().then(t=>t==="Stop")), await btn.textContent());
 check("button stays clickable while working", await btn.isEnabled());
 
-// cancel mid-answer
+const sendsNow = () => gpt.evaluate(()=>window.__sends);
+const picked = async () =>
+  `o0=${await p.locator("#o0").isChecked()} o1=${await p.locator("#o1").isChecked()}`;
+const nothingPicked = async () =>
+  !(await p.locator("#o0").isChecked()) && !(await p.locator("#o1").isChecked());
+
+// 1. Stop straight away, while the page is most likely still being read. The
+// question must not be filled in, whether or not it had reached the assistant.
 await btn.click({force:true});
 check("button returns to HW Helper after cancelling",
   await until(()=>btn.textContent().then(t=>t==="HW Helper"), 8000), await btn.textContent());
 check("status says it stopped",
   await until(()=>p.locator("#hw-helper-status-ezto").textContent().then(t=>/stopped/i.test(t||"")), 10000),
   await p.locator("#hw-helper-status-ezto").textContent().catch(()=>""));
+await new Promise(r=>setTimeout(r,11000));
+check("an early cancel fills nothing in", await nothingPicked(), await picked());
 check("pending request cleared in the worker",
   await sw.evaluate(async()=>!(await chrome.storage.session.get("pendingRequest")).pendingRequest));
 
-// the late reply must not be applied
-await new Promise(r=>setTimeout(r,11000));
-check("late reply did not select anything",
-  !(await p.locator("#o0").isChecked()) && !(await p.locator("#o1").isChecked()),
-  `o0=${await p.locator("#o0").isChecked()} o1=${await p.locator("#o1").isChecked()}`);
-
-// and it can be started again
+// 2. Start again, wait until the question has really gone to the assistant,
+// then stop. Its reply arrives afterwards and must be thrown away.
+const before = await sendsNow();
 await btn.click({force:true});
 check("can be restarted after cancelling",
-  await until(()=>gpt.evaluate(()=>window.__sends>=2), 25000), `sends=${await gpt.evaluate(()=>window.__sends)}`);
+  await until(async()=>(await sendsNow()) > before, 25000), `sends=${await sendsNow()}`);
+await btn.click({force:true});
+check("stopped again while waiting for the reply",
+  await until(()=>btn.textContent().then(t=>t==="HW Helper"), 8000), await btn.textContent());
+await new Promise(r=>setTimeout(r,11000));
+check("the late reply did not select anything", await nothingPicked(), await picked());
+
+// 3. And after all that it still works normally.
+const last = await sendsNow();
+await btn.click({force:true});
+check("a run after two cancels still reaches the assistant",
+  await until(async()=>(await sendsNow()) > last, 25000), `sends=${await sendsNow()}`);
+check("and its answer is applied",
+  await until(()=>p.locator("#o0").isChecked(), 20000), await picked());
 await ctx.close();
 console.log(`\n${failures===0?"ALL CHECKS PASSED":failures+" CHECK(S) FAILED"}`);
 process.exit(failures===0?0:1);
