@@ -23,6 +23,14 @@ Smartbook to an AI assistant and then uses the response to auto-select an answer
 4. Click **Load unpacked** and select the folder containing `manifest.json`.
 5. Open the extension's popup to configure which AI assistant to use.
 
+### Canvas only
+
+`node scripts/build-canvas.mjs` writes a Canvas-only copy to `dist/canvas`. It is
+built from the same sources, so it picks up every fix to the full extension, but
+it only runs on Canvas and the assistant sites and asks for no other access. Load
+`dist/canvas` the same way. Install one or the other, not both: on Canvas they
+would compete for the same button.
+
 ## How it works
 
 1. A content script on the courseware page adds an **Ask AI** button. Clicking it
